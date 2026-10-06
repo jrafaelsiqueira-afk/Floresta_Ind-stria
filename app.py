@@ -15,87 +15,6 @@ import unicodedata
 st.set_page_config(page_title="Florestal Operacional", layout="centered", page_icon="🌲")
 
 # ---------------------------------------------------------
-# OS 8 UTILIZADORES E CREDENCIAIS DE ACESSO
-# ---------------------------------------------------------
-USUARIOS = {
-    "ind_cadastral": {
-        "senha": "123",
-        "nome": "Cadastral - Indústria",
-        "tela": "Cadastral_Industria",
-    },
-    "flor_cadastral": {
-        "senha": "123",
-        "nome": "Cadastral - Floresta",
-        "tela": "Cadastral_Floresta",
-    },
-    "ind_operacional": {
-        "senha": "123",
-        "nome": "Operacional - Indústria",
-        "tela": "Operacional_Industria",
-    },
-    "flor_operacional": {
-        "senha": "123",
-        "nome": "Operacional - Floresta",
-        "tela": "Operacional_Floresta",
-    },
-    "aprovacoes": {
-        "senha": "123",
-        "nome": "Aprovações (Jonas)",
-        "tela": "Aprovacoes",
-    },
-    "pagamentos": {
-        "senha": "123",
-        "nome": "Pagamentos (Matheus)",
-        "tela": "Pagamentos",
-    },
-    "diretoria_1": {
-        "senha": "123",
-        "nome": "Diretoria 1 (Gean)",
-        "tela": "Diretoria",
-    },
-    "diretoria_2": {
-        "senha": "123",
-        "nome": "Diretoria 2 (Gestão)",
-        "tela": "Diretoria",
-    },
-}
-
-# Caixa de Login na Barra Lateral
-st.sidebar.title("🔐 Acesso ao Sistema")
-usuario_selecionado = st.sidebar.selectbox("Selecione o Utilizador", list(USUARIOS.keys()))
-senha_input = st.sidebar.text_input("Palavra-passe", type="password")
-botao_login = st.sidebar.button("Entrar")
-
-if "autenticado" not in st.session_state:
-    st.session_state.autenticado = False
-    st.session_state.perfil_atual = None
-
-if botao_login:
-    if senha_input == USUARIOS[usuario_selecionado]["senha"]:
-        st.session_state.autenticado = True
-        st.session_state.perfil_atual = usuario_selecionado
-        st.sidebar.success(f"Bem-vindo, {USUARIOS[usuario_selecionado]['nome']}!")
-        st.rerun()
-    else:
-        st.sidebar.error("Palavra-passe incorreta.")
-
-if not st.session_state.autenticado:
-    st.warning("⚠️ Por favor, efetue o login na barra lateral para aceder ao sistema.")
-    st.stop()
-
-# Guarda o perfil ativo
-dados_usuario = USUARIOS[st.session_state.perfil_atual]
-tela_permitida = dados_usuario["tela"]
-
-st.sidebar.divider()
-st.sidebar.info(f"Perfil Ativo: **{dados_usuario['nome']}**")
-
-if st.sidebar.button("Terminar Sessão"):
-    st.session_state.autenticado = False
-    st.session_state.perfil_atual = None
-    st.rerun()
-
-# ---------------------------------------------------------
 # CONEXÃO COM A BASE DE DADOS SUPABASE
 # ---------------------------------------------------------
 SUPABASE_URL = "https://ekqemmqbgesyvngbiqyk.supabase.co"
@@ -107,6 +26,102 @@ def init_supabase():
 
 supabase = init_supabase()
 BUCKET_STORAGE = "Funcionarios"
+
+# ---------------------------------------------------------
+# SISTEMA DE LOGIN INTELIGENTE & SENHA MÃE
+# ---------------------------------------------------------
+SENHA_MAE = "GeanMaster2026!"  # Senha mestra administrativa para recuperar acessos
+
+st.sidebar.title("🔐 Acesso ao Sistema")
+
+if "autenticado" not in st.session_state:
+    st.session_state.autenticado = False
+    st.session_state.usuario_logado = None
+
+if not st.session_state.autenticado:
+    modo_login = st.sidebar.radio("Modo:", ["Entrar", "Esqueci a Senha (Senha Mãe)"], horizontal=True)
+    
+    if modo_login == "Entrar":
+        login_input = st.sidebar.text_input("Utilizador Inicial (Ex: ind_cadastral)")
+        senha_input = st.sidebar.text_input("Palavra-passe", type="password")
+        btn_entrar = st.sidebar.button("Entrar")
+        
+        if btn_entrar:
+            try:
+                res = supabase.table("perfis_usuarios").select("*").eq("login_inicial", login_input.strip()).execute()
+                if res.data and len(res.data) > 0:
+                    user_db = res.data[0]
+                    if senha_input == user_db["senha"]:
+                        st.session_state.autenticado = True
+                        st.session_state.usuario_logado = user_db
+                        st.rerun()
+                    else:
+                        st.sidebar.error("Palavra-passe incorreta.")
+                else:
+                    st.sidebar.error("Utilizador não encontrado. Verifique se executou o comando SQL no Supabase.")
+            except Exception as e:
+                st.sidebar.error(f"Erro ao conectar com a tabela de utilizadores: {e}")
+                st.info("💡 Dica: Certifique-se de que criou a tabela 'perfis_usuarios' no SQL Editor do Supabase.")
+    else:
+        st.sidebar.subheader("Recuperação Master")
+        login_rec = st.sidebar.text_input("Utilizador a recuperar")
+        senha_mae_input = st.sidebar.text_input("Insira a Senha Mãe", type="password")
+        nova_senha_rec = st.sidebar.text_input("Definir Nova Palavra-passe", type="password")
+        btn_rec = st.sidebar.button("Redefinir Acesso")
+        
+        if btn_rec:
+            if senha_mae_input == SENHA_MAE:
+                try:
+                    supabase.table("perfis_usuarios").update({
+                        "senha": nova_senha_rec.strip(),
+                        "primeiro_acesso": False
+                    }).eq("login_inicial", login_rec.strip()).execute()
+                    st.sidebar.success("Palavra-passe redefinida com sucesso! Já pode fazer login no modo Entrar.")
+                except Exception as e:
+                    st.sidebar.error(f"Erro ao atualizar: {e}")
+            else:
+                st.sidebar.error("Senha Mãe incorreta.")
+                
+    st.stop()
+
+# Verificar se é o primeiro acesso (para personalizar apelido e nova senha)
+user_atual = st.session_state.usuario_logado
+
+if user_atual.get("primeiro_acesso", True):
+    st.warning("🎉 **Bem-vindo ao primeiro acesso!** Por favor, personalize o seu perfil com o seu nome/apelido e crie a sua palavra-passe pessoal.")
+    with st.form("form_personalizar"):
+        novo_apelido = st.text_input("Seu Nome ou Apelido (Ex: João da Serra, Maria RH...)")
+        nova_senha_p = st.text_input("Crie a sua Nova Palavra-passe Pessoal", type="password")
+        btn_salvar_perfil = st.form_submit_button("Guardar e Entrar no Sistema")
+        
+        if btn_salvar_perfil:
+            if not novo_apelido.strip() or not nova_senha_p.strip():
+                st.error("Preencha o apelido e a nova palavra-passe.")
+            else:
+                supabase.table("perfis_usuarios").update({
+                    "nome_personalizado": novo_apelido.strip(),
+                    "senha": nova_senha_p.strip(),
+                    "primeiro_acesso": False
+                }).eq("id", user_atual["id"]).execute()
+                
+                st.session_state.usuario_logado["nome_personalizado"] = novo_apelido.strip()
+                st.session_state.usuario_logado["senha"] = nova_senha_p.strip()
+                st.session_state.usuario_logado["primeiro_acesso"] = False
+                st.success("Perfil personalizado com sucesso!")
+                st.rerun()
+    st.stop()
+
+# Atribuir dados do utilizador autenticado
+nome_exibicao = user_atual.get("nome_personalizado") or user_atual["login_inicial"]
+tela_permitida = user_atual["setor_perfil"]
+
+st.sidebar.divider()
+st.sidebar.info(f"👤 Utilizador: **{nome_exibicao}**\n\nSetor: **{tela_permitida}**")
+
+if st.sidebar.button("Terminar Sessão"):
+    st.session_state.autenticado = False
+    st.session_state.usuario_logado = None
+    st.rerun()
 
 # ---------------------------------------------------------
 # FUNÇÃO PARA LIMPEZA DE NOMES DE ARQUIVOS
