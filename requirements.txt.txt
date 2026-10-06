@@ -1,0 +1,7 @@
+streamlit
+supabase
+streamlit-drawable-canvas
+fpdf2
+pypdf
+pillow
+numpy
