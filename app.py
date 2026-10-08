@@ -11,7 +11,7 @@ import tempfile
 import os
 import unicodedata
 
-# Configuração da página
+# Configuração da página (DEVE SER A PRIMEIRA LINHA DO STREAMLIT)
 st.set_page_config(page_title="Florestal Operacional", layout="centered", page_icon="🌲")
 
 # ---------------------------------------------------------
@@ -60,7 +60,6 @@ def limpar_nome_arquivo(texto):
 # ---------------------------------------------------------
 # FUNÇÕES GERADORAS (PIX & PDFs)
 # ---------------------------------------------------------
-
 def formata_pix(chave, valor, nome="Colaborador", cidade="Macapa"):
     nome = ''.join(c for c in unicodedata.normalize('NFD', nome) if unicodedata.category(c) != 'Mn')[:25].strip()
     cidade = ''.join(c for c in unicodedata.normalize('NFD', cidade) if unicodedata.category(c) != 'Mn')[:15].strip()
@@ -97,7 +96,7 @@ def formata_pix(chave, valor, nome="Colaborador", cidade="Macapa"):
     return payload + f"{crc:04X}"
 
 
-def gerar_pdf_ficha_epi(nome, cpf, cargo, setor, data_adm, opcao_alojamento, contato_emergencia, epis_entregues, foto_camera=None, canvas_result=None):
+def gerar_pdf_ficha_epi(nome, cpf, cargo, setor, data_adm, opcao_alojamento, contato_emergencia, epis_entregues, autoriza_imagem, foto_camera=None, canvas_result=None):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Helvetica", "B", 14)
@@ -118,7 +117,7 @@ def gerar_pdf_ficha_epi(nome, cpf, cargo, setor, data_adm, opcao_alojamento, con
     pdf.ln(3)
     
     pdf.set_font("Helvetica", "B", 11)
-    pdf.cell(0, 7, "2. UNIFORME, EPIs & TAMANHOS / NUMERACOES", border=False, new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 7, "2. UNIFORME, EPIs & TAMANHOS / CERTIFICADOS (CA)", border=False, new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", "", 9)
     for item in epis_entregues:
         item_limpo = item.replace('ç', 'c').replace('ã', 'a').replace('í', 'i').replace('ó', 'o').replace('á', 'a').replace('ê', 'e')
@@ -136,7 +135,21 @@ def gerar_pdf_ficha_epi(nome, cpf, cargo, setor, data_adm, opcao_alojamento, con
     pdf.ln(4)
     
     pdf.set_font("Helvetica", "B", 11)
-    pdf.cell(0, 7, "4. COMPROVACAO DE ENTREGA (FOTO & ASSINATURA)", border=False, new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 7, "4. AUTORIZACAO DE USO DE IMAGEM E DADOS (LGPD)", border=False, new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 8)
+    texto_imagem = ("Em conformidade com a Lei Geral de Protecao de Dados (LGPD - Lei 13.709/2018), "
+                    "fui informado e manifesto concordancia sobre o uso de minha imagem em fotografias e gravacoes de video, "
+                    "bem como o tratamento de meus dados pessoais para fins exclusivos de identificacao corporativa, "
+                    "emissao de crachas, treinamentos e registros de auditoria da Florestal Amazonia, de forma gratuita e espontanea.")
+    pdf.multi_cell(0, 4, texto_imagem)
+    pdf.ln(2)
+    pdf.set_font("Helvetica", "B", 9)
+    status_auth = "[ X ] SIM, AUTORIZO O USO" if "Sim" in autoriza_imagem else "[ X ] NAO AUTORIZO"
+    pdf.cell(0, 5, f"Opcao Escolhida: {status_auth}", border=False, new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(4)
+
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(0, 7, "5. COMPROVACAO DE ENTREGA (FOTO & ASSINATURA)", border=False, new_x="LMARGIN", new_y="NEXT")
     
     temp_foto_path = None
     temp_sig_path = None
@@ -189,11 +202,11 @@ def gerar_pdf_ficha_epi(nome, cpf, cargo, setor, data_adm, opcao_alojamento, con
     return bytes(pdf.output())
 
 
-def gerar_pdf_cadastro_completo(ficha_epi_bytes, aso_arquivo=None, doc_pessoal_arquivo=None, vacina_arquivo=None, residencia_arquivo=None):
+def gerar_pdf_cadastro_completo(ficha_epi_bytes, documentos_extras):
     writer = PdfWriter()
     writer.append(io.BytesIO(ficha_epi_bytes))
     
-    for arq in [aso_arquivo, doc_pessoal_arquivo, vacina_arquivo, residencia_arquivo]:
+    for arq in documentos_extras:
         if arq is not None:
             bytes_arq = arq.getvalue()
             if hasattr(arq, 'name') and "pdf" in arq.name.lower():
@@ -210,6 +223,7 @@ def gerar_pdf_cadastro_completo(ficha_epi_bytes, aso_arquivo=None, doc_pessoal_a
                     
                     pdf_img = FPDF()
                     pdf_img.add_page()
+                    # Redimensiona a imagem para caber na página A4 de forma limpa
                     pdf_img.image(tmp_img.name, x=10, y=10, w=190)
                     writer.append(io.BytesIO(bytes(pdf_img.output())))
                     os.remove(tmp_img.name)
@@ -454,7 +468,7 @@ def renderizar_painel_colaboradores_ativos():
     total_ativos = len(ativos)
     setores_contagem = {}
     cargos_contagem = {}
-    alojamento_contagem = {"Rede": 0, "Cama": 0}
+    alojamento_contagem = {"Rede": 0, "Cama": 0, "Não Alojado": 0}
     
     hoje = datetime.now().date()
     aso_vencidos_qtd = 0
@@ -481,7 +495,7 @@ def renderizar_painel_colaboradores_ativos():
     with col_t1:
         st.metric("Total Filtrado", total_ativos)
     with col_t2:
-        st.info(f"🏕️ **Alojamento:** Rede: {alojamento_contagem['Rede']} | Cama: {alojamento_contagem['Cama']}")
+        st.info(f"🏕️ **Alojamento:** Rede: {alojamento_contagem['Rede']} | Cama: {alojamento_contagem['Cama']} | Não Alj.: {alojamento_contagem['Não Alojado']}")
     with col_t3:
         if aso_vencidos_qtd > 0:
             st.warning(f"⚠️ **ASO's Próximos/Vencidos (>1 ano):** {aso_vencidos_qtd}")
@@ -522,12 +536,120 @@ def renderizar_painel_colaboradores_ativos():
 st.title("🌲 Florestal Operacional")
 st.caption("Sistema Integrado de Operação & Financeiro")
 
-perfil_usuario = st.sidebar.selectbox(
-    "Selecione o seu Perfil:",
-    ["Proprietário / Diretoria (Gean)", "RH Operacional (Maria / Felipe)", "Engenharia Florestal (Jean Gustavo)", "Lançamentos Financeiros (Jonas)", "Execução de Pagamentos (Matheus)"]
-)
-st.sidebar.divider()
-st.sidebar.info(f"Utilizador ativo: **{perfil_usuario}**")
+# ---------------------------------------------------------
+# SISTEMA DE LOGIN E PRIMEIRO ACESSO
+# ---------------------------------------------------------
+def gerenciar_autenticacao():
+    st.sidebar.title("🔐 Acesso ao Sistema")
+    
+    if "usuario_autenticado" not in st.session_state:
+        st.session_state.usuario_autenticado = False
+        st.session_state.perfil_usuario = None
+        st.session_state.email_usuario = None
+
+    if st.session_state.usuario_autenticado:
+        st.sidebar.success(f"Logado como: {st.session_state.email_usuario}")
+        st.sidebar.info(f"Perfil: {st.session_state.perfil_usuario}")
+        if st.sidebar.button("🚪 Sair do Sistema"):
+            st.session_state.usuario_autenticado = False
+            st.session_state.perfil_usuario = None
+            st.rerun()
+        return True
+
+    tipo_login = st.sidebar.radio("Como deseja entrar?", ["Já tenho E-mail", "Primeiro Acesso (Credencial)"])
+
+    if tipo_login == "Já tenho E-mail":
+        email_login = st.sidebar.text_input("E-mail Definitivo").strip()
+        senha_login = st.sidebar.text_input("Senha", type="password").strip()
+        
+        if st.sidebar.button("Entrar"):
+            try:
+                resposta_auth = supabase.auth.sign_in_with_password({"email": email_login, "password": senha_login})
+                perfil_db = supabase.table("usuarios_perfis").select("perfil").eq("email", email_login).execute()
+                
+                if perfil_db.data:
+                    st.session_state.perfil_usuario = perfil_db.data[0]["perfil"]
+                    st.session_state.email_usuario = email_login
+                    st.session_state.usuario_autenticado = True
+                    st.rerun()
+                else:
+                    st.sidebar.error("Erro: Perfil não encontrado para este e-mail.")
+            except Exception as e:
+                st.sidebar.error("E-mail ou senha incorretos.")
+
+    else:
+        st.sidebar.caption("Utilize o login e senha inicial fornecidos pela diretoria.")
+        login_ini = st.sidebar.text_input("Login Inicial").strip()
+        senha_ini = st.sidebar.text_input("Senha Inicial", type="password").strip()
+        
+        if st.sidebar.button("Verificar Credencial"):
+            res = supabase.table("credenciais_iniciais").select("*").eq("login", login_ini).eq("senha", senha_ini).eq("utilizado", False).execute()
+            if res.data:
+                st.session_state.credencial_valida = res.data[0]
+                st.rerun()
+            else:
+                st.sidebar.error("Credencial inválida ou já utilizada.")
+
+        if "credencial_valida" in st.session_state:
+            st.sidebar.markdown("---")
+            st.sidebar.warning("✅ Credencial Válida! Configure seu acesso definitivo.")
+            
+            novo_email = st.sidebar.text_input("Digite seu E-mail Pessoal").strip()
+            nova_senha = st.sidebar.text_input("Crie uma Nova Senha (mínimo 6 caracteres)", type="password").strip()
+            
+            if st.sidebar.button("Cadastrar e Acessar"):
+                if len(nova_senha) < 6:
+                    st.sidebar.error("A senha deve ter pelo menos 6 caracteres.")
+                elif not novo_email:
+                    st.sidebar.error("O E-mail é obrigatório.")
+                else:
+                    try:
+                        supabase.auth.sign_up({"email": novo_email, "password": nova_senha})
+                        perfil_atribuido = st.session_state.credencial_valida["perfil"]
+                        supabase.table("usuarios_perfis").insert({"email": novo_email, "perfil": perfil_atribuido}).execute()
+                        supabase.table("credenciais_iniciais").update({"utilizado": True}).eq("login", login_ini).execute()
+                        st.sidebar.success("Conta criada com sucesso! Faça login na aba 'Já tenho E-mail'.")
+                        del st.session_state.credencial_valida
+                    except Exception as e:
+                        st.sidebar.error(f"Erro ao criar conta: O e-mail já existe ou é inválido.")
+
+    return False
+
+if not gerenciar_autenticacao():
+    st.stop()
+
+email_logado = st.session_state.email_usuario
+perfil_banco = st.session_state.perfil_usuario
+
+# ---------------------------------------------------------
+# MODO ADMINISTRADOR (Acesso Master para o Gean)
+# ---------------------------------------------------------
+EMAILS_ADMIN = ["jrafaelsiqueira@gmail.com"] 
+
+if email_logado in EMAILS_ADMIN:
+    st.sidebar.divider()
+    st.sidebar.warning("👑 **MODO ADMINISTRADOR ATIVO**")
+    st.sidebar.caption("Como administrador, pode navegar por qualquer aba ou aceder ao painel de correções.")
+    
+    perfil_usuario = st.sidebar.selectbox(
+        "Navegar como:",
+        [
+            "Proprietário / Diretoria (Gean)", 
+            "RH Cadastral - Floresta (Maria)", 
+            "RH Cadastral - Indústria (Felipe)", 
+            "Engenharia Florestal (Jean Gustavo)", 
+            "Operacional Indústria - Serraria (Felipe)",
+            "Operacional Indústria - Carvoaria (Nelson)",
+            "Lançamentos Financeiros (Jonas)", 
+            "Execução de Pagamentos (Matheus)",
+            "🛠️ Painel de Correções (Exclusivo Admin)"
+        ]
+    )
+else:
+    perfil_usuario = perfil_banco
+    st.sidebar.divider()
+    st.sidebar.info(f"Acesso Liberado. Painel Ativo: **{perfil_usuario}**")
+
 
 # ---------------------------------------------------------
 # 0. PROPRIETÁRIO / DIRETORIA (GEAN)
@@ -550,7 +672,6 @@ if perfil_usuario == "Proprietário / Diretoria (Gean)":
     
     total_gasto = sum([d.get('valor', 0) for d in todas_despesas if d.get('status_lancamento') in ["Pago & Concluído", "Arquivado"]])
     
-    # Cálculo de Receitas Industriais (Madeira Serrada + Carvão)
     receita_total_industrial = 0
     if producao_ind_data:
         for p in producao_ind_data:
@@ -655,11 +776,13 @@ if perfil_usuario == "Proprietário / Diretoria (Gean)":
         tabela_fin = [{"ID": d.get('id'), "Categoria": d.get('categoria'), "Valor (R$)": f"R$ {d.get('valor', 0):.2f}", "Status": d.get('status_lancamento')} for d in todas_despesas]
         st.dataframe(tabela_fin, use_container_width=True, hide_index=True)
 
+
 # ---------------------------------------------------------
-# 1. RH OPERACIONAL (MARIA / FELIPE)
+# 1. RH CADASTRAL - UNIFICADO (FLORESTA & INDÚSTRIA)
 # ---------------------------------------------------------
-elif perfil_usuario == "RH Operacional (Maria / Felipe)":
-    st.header("📋 Recursos Humanos")
+elif perfil_usuario in ["RH Cadastral - Floresta (Maria)", "RH Cadastral - Indústria (Felipe)"]:
+    setor_titulo = "Floresta" if "Floresta" in perfil_usuario else "Indústria"
+    st.header(f"📋 Recursos Humanos (Cadastro {setor_titulo})")
     
     desligamentos_pendentes = supabase.table("colaboradores").select("id").in_("status_fluxo", ["Não Habilitado", "Desligamento da empresa"]).execute().data
     if desligamentos_pendentes and len(desligamentos_pendentes) > 0:
@@ -719,33 +842,45 @@ elif perfil_usuario == "RH Operacional (Maria / Felipe)":
             contato_emergencia = st.text_input("📞 Telefone / Contato de Emergência (Nome e Número)")
             
             st.write("⛺ **Opção de Alojamento Rural (Amazônia):**")
-            opcao_alojamento = st.radio("Escolha o arranjo de descanso no campo:", ["Rede", "Cama"], horizontal=True)
+            opcao_alojamento = st.radio("Escolha o arranjo de descanso no campo:", ["Rede", "Cama", "Não Alojado"], horizontal=True)
         
+        # -------------------------------------------------------------
+        # FUNÇÃO OTIMIZADA PARA ANEXAR DOCUMENTOS (CÂMERA OCULTA)
+        # -------------------------------------------------------------
+        def anexar_documento(label, chave):
+            st.markdown(f"**{label}**")
+            # 1. Campo de arquivo padrão sempre visível e limpo
+            arq = st.file_uploader(f"Anexar {label}", type=["pdf", "jpg", "jpeg", "png"], key=f"arq_{chave}", label_visibility="collapsed")
+            
+            # 2. Câmera oculta atrás de um checkbox para não travar o navegador
+            cam = None
+            if st.checkbox("📸 Ligar Câmera (Scanner)", key=f"chk_cam_{chave}"):
+                cam = st.camera_input("Centralize o documento e tire a foto", key=f"cam_{chave}")
+            
+            st.markdown("---")
+            return cam if cam is not None else arq
+        # -------------------------------------------------------------
+
         st.divider()
-        st.subheader("🏥 Digitalização de Documentos & Comprovantes via Câmera")
+        st.subheader("🏥 Digitalização e Anexos de Documentos")
+        st.caption("Faça o upload do arquivo em PDF/Imagem. Caso não tenha o arquivo, marque a opção da câmera para digitalizar na hora.")
         
-        aso_foto_cam = None
-        if st.checkbox("📸 Digitalizar ASO (Exame Admissional) com a Câmera"):
-            aso_foto_cam = st.camera_input("Aponte para o ASO físico e clique em tirar foto", key="cam_aso_input")
-                
-        doc_foto_cam = None
-        if st.checkbox("📸 Digitalizar Documento Pessoal (CNH / RG / CPF) com a Câmera"):
-            doc_foto_cam = st.camera_input("Aponte para o Documento Pessoal e clique em tirar foto", key="cam_doc_input")
+        aso_doc = anexar_documento("1. ASO (Exame Admissional)", "aso")
+        doc_pessoal = anexar_documento("2. Documento Pessoal (CNH / RG / CPF)", "doc_pess")
+        vacina_doc = anexar_documento("3. Carteira de Vacinação Atualizada", "vac")
+        residencia_doc = anexar_documento("4. Comprovante de Residência", "res")
+        contrato_doc = anexar_documento("5. Contrato de Trabalho Assinado", "contrato")
 
-        vacina_foto_cam = None
-        if st.checkbox("📸 Digitalizar Carteira de Vacinação Atualizada com a Câmera"):
-            vacina_foto_cam = st.camera_input("Aponte para a Carteira de Vacinação e clique em tirar foto", key="cam_vacina_input")
-
-        residencia_foto_cam = None
-        if st.checkbox("📸 Digitalizar Comprovante de Residência com a Câmera"):
-            residencia_foto_cam = st.camera_input("Aponte para o Comprovante de Residência e clique em tirar foto", key="cam_residencia_input")
+        tem_filhos = st.checkbox("Possui filhos menores que 14 anos?")
+        certidao_doc = None
+        if tem_filhos:
+            certidao_doc = anexar_documento("6. Certidão de Nascimento do(s) Filho(s)", "cert_filho")
         
         st.divider()
         st.subheader("👕 Uniforme & 🪖 Kit de EPI Obrigatório (PGR)")
         
         epis_exigidos = EPI_POR_SETOR[setor_escolhido][cargo_escolhido].copy()
         
-        # Acrescenta o Uniforme com escolha de tamanho
         st.markdown("---")
         st.write("👔 **Uniforme Institucional / Operacional**")
         c_uni_check, c_uni_tam = st.columns([2, 2])
@@ -758,31 +893,38 @@ elif perfil_usuario == "RH Operacional (Maria / Felipe)":
             
         st.write("🔧 **Equipamentos de Proteção Individual (EPIs):**")
         col_epi1, col_epi2 = st.columns(2)
+        
         for i, epi in enumerate(epis_exigidos):
             col_destino = col_epi1 if i % 2 == 0 else col_epi2
+            c_chk, c_extra = col_destino.columns([6, 4])
             
-            # Se for bota, abre a janela para inserir o número
+            checado = c_chk.checkbox(epi, key=f"epi_{i}")
+            
             if "BOTA" in epi.upper():
-                c_chk, c_num = col_destino.columns([3, 2])
-                checado = c_chk.checkbox(epi, key=f"epi_{i}")
-                num_bota = c_num.text_input("Nº Bota", value="41", key=f"num_bota_{i}")
+                c_ca, c_num = c_extra.columns(2)
+                ca_val = c_ca.text_input("CA", placeholder="Nº CA", key=f"ca_{i}", label_visibility="collapsed")
+                num_bota = c_num.text_input("Nº Bota", value="41", key=f"num_{i}", label_visibility="collapsed")
                 if checado:
-                    epis_marcados.append(f"{epi} (Numeração: {num_bota})")
+                    epis_marcados.append(f"{epi} (CA: {ca_val} | Numeração: {num_bota})")
             else:
-                if col_destino.checkbox(epi, key=f"epi_{i}"):
-                    epis_marcados.append(epi)
-        
-        todos_epis_checados = len(epis_marcados) >= len(epis_exigidos)
+                ca_val = c_extra.text_input("CA", placeholder="Nº CA", key=f"ca_{i}", label_visibility="collapsed")
+                if checado:
+                    epis_marcados.append(f"{epi} (CA: {ca_val})")
         
         st.divider()
-        conduta = st.checkbox("Código de Conduta & Regras de Segurança Lidas e Aceites")
+        conduta = st.checkbox("Li e aceito o Código de Conduta & Regras de Segurança")
         
-        st.write("📷 **Registo de Foto do Colaborador**")
+        st.write("📜 **Autorização de Uso de Imagem (LGPD)**")
+        st.info("Em conformidade com a Lei Geral de Proteção de Dados (LGPD - Lei 13.709/2018), autorizo o uso de minha imagem em fotografias e gravações de vídeo para fins exclusivos de identificação corporativa, crachás, treinamentos e registros de auditoria da Florestal Amazônia, de forma gratuita e espontânea.")
+        autoriza_imagem = st.radio("Autoriza o uso da sua imagem?", ["Sim, autorizo", "Não autorizo"], horizontal=True)
+
+        st.divider()
+        st.write("📷 **Registro de Foto do Colaborador (Rosto)**")
         foto_capturada = None
         if "foto_arquivo_temp" not in st.session_state:
             st.session_state.foto_arquivo_temp = None
 
-        if st.checkbox("Ligar Câmera para Foto do Rosto"):
+        if st.checkbox("📸 Ligar Câmera para Foto do Rosto"):
             foto_input_raw = st.camera_input("Clique abaixo para tirar a foto do colaborador", key="cam_rosto")
             if foto_input_raw is not None:
                 st.session_state.foto_arquivo_temp = foto_input_raw
@@ -804,8 +946,8 @@ elif perfil_usuario == "RH Operacional (Maria / Felipe)":
                 st.error("Preencha todos os dados essenciais do colaborador, incluindo o Contato de Emergência.")
             elif not validar_cpf(cpf_limpo_val):
                 st.error("⚠️ CPF inválido! Verifique os dígitos informados.")
-            elif not vacina_foto_cam or not residencia_foto_cam:
-                st.error("⚠️ A digitalização via câmera da Carteira de Vacinação e do Comprovante de Residência são obrigatórias.")
+            elif not vacina_doc or not residencia_doc:
+                st.error("⚠️ A digitalização ou anexo da Carteira de Vacinação e do Comprovante de Residência são obrigatórios.")
             elif not conduta:
                 st.error("O Código de Conduta precisa ser confirmado.")
             elif not (tem_foto or tem_assinatura):
@@ -813,8 +955,10 @@ elif perfil_usuario == "RH Operacional (Maria / Felipe)":
             else:
                 setor_db = "Colheita" if setor_escolhido == "Floresta" else ("Indústria" if setor_escolhido == "Indústria / Carvoaria" else setor_escolhido)
                 
-                pdf_ficha_epi_bytes = gerar_pdf_ficha_epi(nome.strip(), cpf.strip(), cargo_escolhido, setor_escolhido, data_adm.strftime("%d/%m/%Y"), opcao_alojamento, contato_emergencia.strip(), epis_marcados, foto_capturada, canvas_result)
-                pdf_cadastro_completo = gerar_pdf_cadastro_completo(pdf_ficha_epi_bytes, aso_foto_cam, doc_pessoal_arquivo=doc_foto_cam, vacina_arquivo=vacina_foto_cam, residencia_arquivo=residencia_foto_cam)
+                docs_extras = [aso_doc, doc_pessoal, vacina_doc, residencia_doc, contrato_doc, certidao_doc]
+                
+                pdf_ficha_epi_bytes = gerar_pdf_ficha_epi(nome.strip(), cpf.strip(), cargo_escolhido, setor_escolhido, data_adm.strftime("%d/%m/%Y"), opcao_alojamento, contato_emergencia.strip(), epis_marcados, autoriza_imagem, foto_capturada, canvas_result)
+                pdf_cadastro_completo = gerar_pdf_cadastro_completo(pdf_ficha_epi_bytes, docs_extras)
                 
                 nome_limpo = limpar_nome_arquivo(nome.strip())
                 pasta_funcionario = f"{nome_limpo}_{cpf_limpo_val}"
@@ -826,41 +970,23 @@ elif perfil_usuario == "RH Operacional (Maria / Felipe)":
                     pass
                 url_pdf = supabase.storage.from_(BUCKET_STORAGE).get_public_url(nome_arquivo_epi)
                 
-                url_aso_final = ""
-                if aso_foto_cam is not None:
-                    try:
-                        nome_arquivo_aso = f"{pasta_funcionario}/Aso/Exame_Admissional.jpg"
-                        supabase.storage.from_(BUCKET_STORAGE).upload(nome_arquivo_aso, aso_foto_cam.getvalue(), {"upsert": "true"})
-                        url_aso_final = supabase.storage.from_(BUCKET_STORAGE).get_public_url(nome_arquivo_aso)
-                    except:
-                        pass
+                def salvar_arquivo_storage(arquivo, subpasta, nome_padrao):
+                    if arquivo is not None:
+                        try:
+                            extensao = "pdf" if (hasattr(arquivo, 'name') and "pdf" in arquivo.name.lower()) else "jpg"
+                            caminho = f"{pasta_funcionario}/{subpasta}/{nome_padrao}.{extensao}"
+                            supabase.storage.from_(BUCKET_STORAGE).upload(caminho, arquivo.getvalue(), {"upsert": "true"})
+                            return supabase.storage.from_(BUCKET_STORAGE).get_public_url(caminho)
+                        except:
+                            pass
+                    return ""
 
-                url_doc_final = ""
-                if doc_foto_cam is not None:
-                    try:
-                        nome_arquivo_doc = f"{pasta_funcionario}/Documentos_Pessoais/Documento_Pessoal.jpg"
-                        supabase.storage.from_(BUCKET_STORAGE).upload(nome_arquivo_doc, doc_foto_cam.getvalue(), {"upsert": "true"})
-                        url_doc_final = supabase.storage.from_(BUCKET_STORAGE).get_public_url(nome_arquivo_doc)
-                    except:
-                        pass
-
-                url_vacina_final = ""
-                if vacina_foto_cam is not None:
-                    try:
-                        nome_arquivo_v = f"{pasta_funcionario}/Vacinacao/Carteira_Vacinacao.jpg"
-                        supabase.storage.from_(BUCKET_STORAGE).upload(nome_arquivo_v, vacina_foto_cam.getvalue(), {"upsert": "true"})
-                        url_vacina_final = supabase.storage.from_(BUCKET_STORAGE).get_public_url(nome_arquivo_v)
-                    except:
-                        pass
-
-                url_residencia_final = ""
-                if residencia_foto_cam is not None:
-                    try:
-                        nome_arquivo_r = f"{pasta_funcionario}/Residencia/Comprovante_Residencia.jpg"
-                        supabase.storage.from_(BUCKET_STORAGE).upload(nome_arquivo_r, residencia_foto_cam.getvalue(), {"upsert": "true"})
-                        url_residencia_final = supabase.storage.from_(BUCKET_STORAGE).get_public_url(nome_arquivo_r)
-                    except:
-                        pass
+                url_aso_final = salvar_arquivo_storage(aso_doc, "Aso", "Exame_Admissional")
+                url_doc_final = salvar_arquivo_storage(doc_pessoal, "Documentos_Pessoais", "Documento_Pessoal")
+                url_vacina_final = salvar_arquivo_storage(vacina_doc, "Vacinacao", "Carteira_Vacinacao")
+                url_residencia_final = salvar_arquivo_storage(residencia_doc, "Residencia", "Comprovante_Residencia")
+                url_contrato_final = salvar_arquivo_storage(contrato_doc, "Contrato", "Contrato_Trabalho")
+                url_certidao_final = salvar_arquivo_storage(certidao_doc, "Dependentes", "Certidao_Filho")
                 
                 try:
                     supabase.table("colaboradores").insert({
@@ -868,8 +994,11 @@ elif perfil_usuario == "RH Operacional (Maria / Felipe)":
                         "data_admissao": data_adm.strftime("%Y-%m-%d"), "ficha_epi_assinada": True, "codigo_conduta_lido": conduta,
                         "status_fluxo": "Aguardando Treinamento", "url_ficha_pdf": url_pdf, "chave_pix": chave_pix_cad.strip(), 
                         "url_aso": url_aso_final, "url_documento_pessoal": url_doc_final, "url_vacina": url_vacina_final, 
-                        "url_residencia": url_residencia_final, "opcao_alojamento": opcao_alojamento, "contato_emergencia": contato_emergencia.strip()
+                        "url_residencia": url_residencia_final, "opcao_alojamento": opcao_alojamento, "contato_emergencia": contato_emergencia.strip(),
+                        "url_contrato_trabalho": url_contrato_final, "url_certidao_filhos": url_certidao_final, "autoriza_imagem": autoriza_imagem,
+                        "cadastrado_por": email_logado
                     }).execute()
+                    
                     st.success(f"Colaborador {nome} registado com sucesso e todos os documentos arquivados!")
                     st.session_state.foto_arquivo_temp = None
                     st.download_button("📥 Baixar Cadastro Realizado (PDF)", pdf_cadastro_completo, f"Cadastro_{nome_limpo}.pdf", "application/pdf")
@@ -935,10 +1064,10 @@ elif perfil_usuario == "RH Operacional (Maria / Felipe)":
         renderizar_painel_colaboradores_ativos()
 
 # ---------------------------------------------------------
-# 2. ENGENHARIA FLORESTAL (JEAN GUSTAVO)
+# 2A. ENGENHARIA FLORESTAL (JEAN GUSTAVO)
 # ---------------------------------------------------------
 elif perfil_usuario == "Engenharia Florestal (Jean Gustavo)":
-    st.header("🌲 Gestão Operacional de Equipes & Indústria")
+    st.header("🌲 Gestão Operacional de Equipes & Indústria (Florestal)")
     menu_operacoes = st.radio("Selecione a Ação:", ["🚜 Treinamentos", "💸 Diárias e Adiantamentos", "❌ Registro de Faltas", "🚪 Desligamento (Demissão)", "📊 Produção Florestal", "🏭 Produção Industrial (Madeira/Carvão)", "👥 Colaboradores em Operação"], horizontal=True)
     st.divider()
 
@@ -987,7 +1116,8 @@ elif perfil_usuario == "Engenharia Florestal (Jean Gustavo)":
             if st.button("Registrar Falta"):
                 supabase.table("registro_faltas").insert({
                     "id_colaborador": opcoes[colab_nome], "nome_colaborador": colab_nome,
-                    "data_falta": dt_falta.strftime("%Y-%m-%d"), "observacao": obs, "status_falta": "Pendente"
+                    "data_falta": dt_falta.strftime("%Y-%m-%d"), "observacao": obs, "status_falta": "Pendente",
+                    "cadastrado_por": email_logado
                 }).execute()
                 st.success("Falta registrada!")
 
@@ -1051,6 +1181,245 @@ elif perfil_usuario == "Engenharia Florestal (Jean Gustavo)":
 
     elif menu_operacoes == "👥 Colaboradores em Operação":
         renderizar_painel_colaboradores_ativos()
+
+# ---------------------------------------------------------
+# 2B. OPERACIONAL INDÚSTRIA - SERRARIA (FELIPE)
+# ---------------------------------------------------------
+elif perfil_usuario == "Operacional Indústria - Serraria (Felipe)":
+    st.header("🌲 Gestão Operacional de Equipes & Indústria (Serraria)")
+    menu_operacoes = st.radio("Selecione a Ação:", ["🚜 Treinamentos", "💸 Diárias e Adiantamentos", "❌ Registro de Faltas", "🚪 Desligamento (Demissão)", "📊 Produção Florestal", "🏭 Produção Industrial (Madeira/Carvão)", "👥 Colaboradores em Operação"], horizontal=True)
+    st.divider()
+
+    if menu_operacoes == "🚜 Treinamentos":
+        st.subheader("Gestão de Treinamentos e Liberação para Operação")
+        pendentes = supabase.table("colaboradores").select("*").in_("status_fluxo", ["Aguardando Treinamento", "Em Treinamento"]).execute().data
+        for colab in pendentes:
+            with st.expander(f"📌 {colab['nome_completo']} - {colab['cargo']} [{colab['status_fluxo']}]"):
+                if colab['status_fluxo'] == "Aguardando Treinamento":
+                    if st.button("Iniciar Treinamento", key=f"init_{colab['id']}"):
+                        supabase.table("colaboradores").update({"status_fluxo": "Em Treinamento"}).eq("id", colab['id']).execute()
+                        st.rerun()
+                else:
+                    nota = st.number_input("Nota Final (0 a 100)", 0, 100, 0, key=f"nota_{colab['id']}")
+                    cert = st.file_uploader("Certificado PDF", type=["pdf"], key=f"cert_{colab['id']}")
+                    if st.button("Liberar Operação", key=f"lib_{colab['id']}"):
+                        if nota >= 70 and cert:
+                            supabase.table("colaboradores").update({"status_fluxo": "Operação Liberada"}).eq("id", colab['id']).execute()
+                            st.success("Liberado!"); st.rerun()
+
+    elif menu_operacoes == "💸 Diárias e Adiantamentos":
+        st.subheader("Solicitação de Pagamentos")
+        aptos = supabase.table("colaboradores").select("id, nome_completo, cargo, setor, chave_pix").eq("status_fluxo", "Operação Liberada").execute().data
+        if aptos:
+            tipo = st.radio("Tipo:", ["Diária", "Adiantamento"], horizontal=True)
+            opcoes = {f"{c['nome_completo']}": c for c in aptos}
+            sel = opcoes[st.selectbox("Colaborador:", list(opcoes.keys()))]
+            vlr = st.number_input("Valor (R$)", min_value=1.0, value=100.0)
+            pix = st.text_input("PIX", value=sel.get('chave_pix', ''))
+            if st.button("Enviar Ordem"):
+                supabase.table("lancamentos_financeiros").insert({
+                    "descricao": f"{tipo} - {sel['nome_completo']} | PIX: {pix}",
+                    "categoria": "Diárias Operacionais" if tipo == "Diária" else "Adiantamento Salarial",
+                    "valor": vlr, "data_vencimento": datetime.now().strftime("%Y-%m-%d"), "status_lancamento": "Aprovação Pendente Financeiro"
+                }).execute()
+                st.success("Enviado para o financeiro!")
+
+    elif menu_operacoes == "❌ Registro de Faltas":
+        st.subheader("Apontamento de Faltas")
+        aptos = supabase.table("colaboradores").select("id, nome_completo").eq("status_fluxo", "Operação Liberada").execute().data
+        if aptos:
+            opcoes = {c['nome_completo']: c['id'] for c in aptos}
+            colab_nome = st.selectbox("Colaborador:", list(opcoes.keys()))
+            dt_falta = st.date_input("Data")
+            obs = st.text_area("Motivo")
+            if st.button("Registrar Falta"):
+                supabase.table("registro_faltas").insert({
+                    "id_colaborador": opcoes[colab_nome], "nome_colaborador": colab_nome,
+                    "data_falta": dt_falta.strftime("%Y-%m-%d"), "observacao": obs, "status_falta": "Pendente",
+                    "cadastrado_por": email_logado
+                }).execute()
+                st.success("Falta registrada!")
+
+    elif menu_operacoes == "🚪 Desligamento (Demissão)":
+        st.subheader("Desligamento")
+        aptos = supabase.table("colaboradores").select("*").eq("status_fluxo", "Operação Liberada").execute().data
+        if aptos:
+            opcoes = {c['nome_completo']: c for c in aptos}
+            sel = opcoes[st.selectbox("Colaborador:", list(opcoes.keys()))]
+            motivo = st.text_area("Motivo do Desligamento:")
+            if st.button("Confirmar Desligamento"):
+                supabase.table("colaboradores").update({"status_fluxo": "Desligamento da empresa", "motivo_desligamento": motivo}).eq("id", sel['id']).execute()
+                st.success("Encaminhado para o RH!")
+
+    elif menu_operacoes == "📊 Produção Florestal":
+        st.subheader("📊 Produção Diária (Floresta)")
+        with st.form("form_prod_florestal"):
+            dt_prod = st.date_input("Data")
+            arv_abat = st.number_input("Árvores Abatidas", 0, value=0)
+            vol_abat = st.number_input("Volume Abatido (m³)", 0.0, value=0.0, format="%.3f")
+            if st.form_submit_button("Salvar"):
+                supabase.table("producao_diaria").insert({"data_producao": dt_prod.strftime("%Y-%m-%d"), "arvores_abatidas": arv_abat, "volume_abatido_m3": vol_abat}).execute()
+                st.success("Salvo com sucesso!")
+
+    elif menu_operacoes == "🏭 Produção Industrial (Madeira/Carvão)":
+        st.subheader("🏭 Controle de Produção e Estoque Industrial")
+        sub_ind = st.radio("Selecione o Produto:", ["Madeira Serrada", "Carvão"], horizontal=True)
+        st.divider()
+        
+        if sub_ind == "Madeira Serrada":
+            with st.form("form_madeira"):
+                dt_m = st.date_input("Data", key="dt_m")
+                especie = st.text_input("Espécie da Madeira (Ex: Ipê, Jatobá)")
+                vol_tora = st.number_input("Volume de Tora Serrado (m³)", 0.0, format="%.3f")
+                vol_serrado = st.number_input("Volume Madeira Serrada Obtida (m³)", 0.0, format="%.3f")
+                vol_saida = st.number_input("Volume Saídas/Vendido (m³)", 0.0, format="%.3f")
+                vlr_unit = st.number_input("Valor Unitário Vendido (R$/m³)", 0.0, format="%.2f")
+                if st.form_submit_button("Salvar Madeira Serrada"):
+                    if not especie.strip():
+                        st.error("Informe a espécie.")
+                    else:
+                        supabase.table("producao_industrial").insert({
+                            "tipo_produto": "Madeira Serrada", "data_producao": dt_m.strftime("%Y-%m-%d"),
+                            "especie": especie.strip(), "volume_tora": vol_tora, "volume_serrado": vol_serrado,
+                            "quantidade_saida": vol_saida, "valor_unitario": vlr_unit
+                        }).execute()
+                        st.success("Salvo com sucesso!")
+                        
+        elif sub_ind == "Carvão":
+            with st.form("form_carv"):
+                dt_c = st.date_input("Data", key="dt_c")
+                prod_sacas = st.number_input("Qtd Produzida (Sacas)", 0.0, format="%.1f")
+                saida_sacas = st.number_input("Qtd Saídas/Vendidas (Sacas)", 0.0, format="%.1f")
+                vlr_unit_c = st.number_input("Valor Unitário Vendido (R$/saca)", 0.0, format="%.2f")
+                if st.form_submit_button("Salvar Carvão"):
+                    supabase.table("producao_industrial").insert({
+                        "tipo_produto": "Carvão", "data_producao": dt_c.strftime("%Y-%m-%d"),
+                        "quantidade_produzida": prod_sacas, "quantidade_saida": saida_sacas, "valor_unitario": vlr_unit_c
+                    }).execute()
+                    st.success("Salvo com sucesso!")
+
+    elif menu_operacoes == "👥 Colaboradores em Operação":
+        renderizar_painel_colaboradores_ativos()
+
+# ---------------------------------------------------------
+# 2C. OPERACIONAL INDÚSTRIA - CARVOARIA (NELSON)
+# ---------------------------------------------------------
+elif perfil_usuario == "Operacional Indústria - Carvoaria (Nelson)":
+    st.header("🌲 Gestão Operacional de Equipes & Indústria (Carvoaria)")
+    menu_operacoes = st.radio("Selecione a Ação:", ["🚜 Treinamentos", "💸 Diárias e Adiantamentos", "❌ Registro de Faltas", "🚪 Desligamento (Demissão)", "📊 Produção Florestal", "🏭 Produção Industrial (Madeira/Carvão)", "👥 Colaboradores em Operação"], horizontal=True)
+    st.divider()
+
+    if menu_operacoes == "🚜 Treinamentos":
+        st.subheader("Gestão de Treinamentos e Liberação para Operação")
+        pendentes = supabase.table("colaboradores").select("*").in_("status_fluxo", ["Aguardando Treinamento", "Em Treinamento"]).execute().data
+        for colab in pendentes:
+            with st.expander(f"📌 {colab['nome_completo']} - {colab['cargo']} [{colab['status_fluxo']}]"):
+                if colab['status_fluxo'] == "Aguardando Treinamento":
+                    if st.button("Iniciar Treinamento", key=f"init_{colab['id']}"):
+                        supabase.table("colaboradores").update({"status_fluxo": "Em Treinamento"}).eq("id", colab['id']).execute()
+                        st.rerun()
+                else:
+                    nota = st.number_input("Nota Final (0 a 100)", 0, 100, 0, key=f"nota_{colab['id']}")
+                    cert = st.file_uploader("Certificado PDF", type=["pdf"], key=f"cert_{colab['id']}")
+                    if st.button("Liberar Operação", key=f"lib_{colab['id']}"):
+                        if nota >= 70 and cert:
+                            supabase.table("colaboradores").update({"status_fluxo": "Operação Liberada"}).eq("id", colab['id']).execute()
+                            st.success("Liberado!"); st.rerun()
+
+    elif menu_operacoes == "💸 Diárias e Adiantamentos":
+        st.subheader("Solicitação de Pagamentos")
+        aptos = supabase.table("colaboradores").select("id, nome_completo, cargo, setor, chave_pix").eq("status_fluxo", "Operação Liberada").execute().data
+        if aptos:
+            tipo = st.radio("Tipo:", ["Diária", "Adiantamento"], horizontal=True)
+            opcoes = {f"{c['nome_completo']}": c for c in aptos}
+            sel = opcoes[st.selectbox("Colaborador:", list(opcoes.keys()))]
+            vlr = st.number_input("Valor (R$)", min_value=1.0, value=100.0)
+            pix = st.text_input("PIX", value=sel.get('chave_pix', ''))
+            if st.button("Enviar Ordem"):
+                supabase.table("lancamentos_financeiros").insert({
+                    "descricao": f"{tipo} - {sel['nome_completo']} | PIX: {pix}",
+                    "categoria": "Diárias Operacionais" if tipo == "Diária" else "Adiantamento Salarial",
+                    "valor": vlr, "data_vencimento": datetime.now().strftime("%Y-%m-%d"), "status_lancamento": "Aprovação Pendente Financeiro"
+                }).execute()
+                st.success("Enviado para o financeiro!")
+
+    elif menu_operacoes == "❌ Registro de Faltas":
+        st.subheader("Apontamento de Faltas")
+        aptos = supabase.table("colaboradores").select("id, nome_completo").eq("status_fluxo", "Operação Liberada").execute().data
+        if aptos:
+            opcoes = {c['nome_completo']: c['id'] for c in aptos}
+            colab_nome = st.selectbox("Colaborador:", list(opcoes.keys()))
+            dt_falta = st.date_input("Data")
+            obs = st.text_area("Motivo")
+            if st.button("Registrar Falta"):
+                supabase.table("registro_faltas").insert({
+                    "id_colaborador": opcoes[colab_nome], "nome_colaborador": colab_nome,
+                    "data_falta": dt_falta.strftime("%Y-%m-%d"), "observacao": obs, "status_falta": "Pendente",
+                    "cadastrado_por": email_logado
+                }).execute()
+                st.success("Falta registrada!")
+
+    elif menu_operacoes == "🚪 Desligamento (Demissão)":
+        st.subheader("Desligamento")
+        aptos = supabase.table("colaboradores").select("*").eq("status_fluxo", "Operação Liberada").execute().data
+        if aptos:
+            opcoes = {c['nome_completo']: c for c in aptos}
+            sel = opcoes[st.selectbox("Colaborador:", list(opcoes.keys()))]
+            motivo = st.text_area("Motivo do Desligamento:")
+            if st.button("Confirmar Desligamento"):
+                supabase.table("colaboradores").update({"status_fluxo": "Desligamento da empresa", "motivo_desligamento": motivo}).eq("id", sel['id']).execute()
+                st.success("Encaminhado para o RH!")
+
+    elif menu_operacoes == "📊 Produção Florestal":
+        st.subheader("📊 Produção Diária (Floresta)")
+        with st.form("form_prod_florestal"):
+            dt_prod = st.date_input("Data")
+            arv_abat = st.number_input("Árvores Abatidas", 0, value=0)
+            vol_abat = st.number_input("Volume Abatido (m³)", 0.0, value=0.0, format="%.3f")
+            if st.form_submit_button("Salvar"):
+                supabase.table("producao_diaria").insert({"data_producao": dt_prod.strftime("%Y-%m-%d"), "arvores_abatidas": arv_abat, "volume_abatido_m3": vol_abat}).execute()
+                st.success("Salvo com sucesso!")
+
+    elif menu_operacoes == "🏭 Produção Industrial (Madeira/Carvão)":
+        st.subheader("🏭 Controle de Produção e Estoque Industrial")
+        sub_ind = st.radio("Selecione o Produto:", ["Madeira Serrada", "Carvão"], horizontal=True)
+        st.divider()
+        
+        if sub_ind == "Madeira Serrada":
+            with st.form("form_madeira"):
+                dt_m = st.date_input("Data", key="dt_m")
+                especie = st.text_input("Espécie da Madeira (Ex: Ipê, Jatobá)")
+                vol_tora = st.number_input("Volume de Tora Serrado (m³)", 0.0, format="%.3f")
+                vol_serrado = st.number_input("Volume Madeira Serrada Obtida (m³)", 0.0, format="%.3f")
+                vol_saida = st.number_input("Volume Saídas/Vendido (m³)", 0.0, format="%.3f")
+                vlr_unit = st.number_input("Valor Unitário Vendido (R$/m³)", 0.0, format="%.2f")
+                if st.form_submit_button("Salvar Madeira Serrada"):
+                    if not especie.strip():
+                        st.error("Informe a espécie.")
+                    else:
+                        supabase.table("producao_industrial").insert({
+                            "tipo_produto": "Madeira Serrada", "data_producao": dt_m.strftime("%Y-%m-%d"),
+                            "especie": especie.strip(), "volume_tora": vol_tora, "volume_serrado": vol_serrado,
+                            "quantidade_saida": vol_saida, "valor_unitario": vlr_unit
+                        }).execute()
+                        st.success("Salvo com sucesso!")
+                        
+        elif sub_ind == "Carvão":
+            with st.form("form_carv"):
+                dt_c = st.date_input("Data", key="dt_c")
+                prod_sacas = st.number_input("Qtd Produzida (Sacas)", 0.0, format="%.1f")
+                saida_sacas = st.number_input("Qtd Saídas/Vendidas (Sacas)", 0.0, format="%.1f")
+                vlr_unit_c = st.number_input("Valor Unitário Vendido (R$/saca)", 0.0, format="%.2f")
+                if st.form_submit_button("Salvar Carvão"):
+                    supabase.table("producao_industrial").insert({
+                        "tipo_produto": "Carvão", "data_producao": dt_c.strftime("%Y-%m-%d"),
+                        "quantidade_produzida": prod_sacas, "quantidade_saida": saida_sacas, "valor_unitario": vlr_unit_c
+                    }).execute()
+                    st.success("Salvo com sucesso!")
+
+    elif menu_operacoes == "👥 Colaboradores em Operação":
+        renderizar_painel_colaboradores_ativos()
+
 
 # ---------------------------------------------------------
 # 3. LANÇAMENTOS FINANCEIROS E RECIBOS (JONAS)
@@ -1133,3 +1502,45 @@ elif perfil_usuario == "Execução de Pagamentos (Matheus)":
 
     with aba_ativos_m:
         renderizar_painel_colaboradores_ativos()
+
+# ---------------------------------------------------------
+# 5. PAINEL DE CORREÇÕES (EXCLUSIVO ADMIN)
+# ---------------------------------------------------------
+elif perfil_usuario == "🛠️ Painel de Correções (Exclusivo Admin)":
+    st.header("🛠️ Painel de Manutenção e Correções")
+    st.caption("Esta área é restrita. Cuidado ao apagar dados, pois a exclusão é permanente.")
+    
+    aba_corr_fin, aba_corr_func = st.tabs(["💰 Apagar Lançamentos Financeiros", "👥 Apagar/Corrigir Funcionários"])
+    
+    with aba_corr_fin:
+        st.subheader("Gestão de Lançamentos Financeiros")
+        todos_lancamentos = supabase.table("lancamentos_financeiros").select("*").order("id", desc=True).execute().data
+        
+        if not todos_lancamentos:
+            st.info("Nenhum lançamento encontrado no banco de dados.")
+        else:
+            for lanc in todos_lancamentos:
+                with st.expander(f"ID: {lanc['id']} | {lanc['categoria']} | R$ {lanc['valor']:.2f} | Status: {lanc['status_lancamento']}"):
+                    st.write(f"**Descrição original:** {lanc['descricao']}")
+                    st.write(f"**Data de Vencimento:** {lanc['data_vencimento']}")
+                    
+                    if st.button("🗑️ Apagar este lançamento definitivamente", key=f"del_fin_{lanc['id']}"):
+                        supabase.table("lancamentos_financeiros").delete().eq("id", lanc['id']).execute()
+                        st.success("Lançamento apagado com sucesso!")
+                        st.rerun()
+
+    with aba_corr_func:
+        st.subheader("Gestão de Colaboradores (Exclusão por Erro)")
+        todos_colabs = supabase.table("colaboradores").select("*").order("id", desc=True).execute().data
+        
+        if not todos_colabs:
+            st.info("Nenhum colaborador encontrado.")
+        else:
+            for colab in todos_colabs:
+                with st.expander(f"ID: {colab['id']} | {colab['nome_completo']} | CPF: {colab['cpf']} | {colab['status_fluxo']}"):
+                    st.write(f"**Cargo:** {colab['cargo']} | **Setor:** {colab['setor']}")
+                    
+                    if st.button("🗑️ Apagar registo do colaborador", key=f"del_colab_{colab['id']}"):
+                        supabase.table("colaboradores").delete().eq("id", colab['id']).execute()
+                        st.success("Colaborador apagado do sistema!")
+                        st.rerun()
