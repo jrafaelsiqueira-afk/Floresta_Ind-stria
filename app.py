@@ -432,10 +432,12 @@ def renderizar_reprovados(email):
 # ---------------------------------------------------------
 def gerenciar_autenticacao():
     st.sidebar.title("🔐 Acesso ao Sistema")
+    
     if "usuario_autenticado" not in st.session_state:
         st.session_state.usuario_autenticado = False
         st.session_state.perfil_usuario = None
         st.session_state.email_usuario = None
+        
     if st.session_state.usuario_autenticado:
         st.sidebar.success(f"Logado: {st.session_state.email_usuario}")
         if st.sidebar.button("🚪 Sair"):
@@ -443,26 +445,48 @@ def gerenciar_autenticacao():
             st.session_state.perfil_usuario = None
             st.rerun()
         return True
-    email_login = st.sidebar.text_input("E-mail").strip()
-    senha_login = st.sidebar.text_input("Senha", type="password").strip()
-    if st.sidebar.button("Entrar"):
-        try:
-            supabase.auth.sign_in_with_password({"email": email_login, "password": senha_login})
-            perfil_db = supabase.table("usuarios_perfis").select("perfil").eq("email", email_login).execute()
-            if perfil_db.data:
-                st.session_state.perfil_usuario = perfil_db.data[0]["perfil"]
-                st.session_state.email_usuario = email_login
-                st.session_state.usuario_autenticado = True
-                st.rerun()
-            else: st.sidebar.error("Perfil não encontrado.")
-        except: st.sidebar.error("E-mail ou senha incorretos.")
+
+    # Melhoria 1: Uso de st.form e autocomplete para o navegador salvar a senha
+    with st.sidebar.form("form_login"):
+        email_login = st.text_input("E-mail", autocomplete="username").strip()
+        senha_login = st.text_input("Senha", type="password", autocomplete="current-password").strip()
+        submit_login = st.form_submit_button("Entrar")
+        
+        if submit_login:
+            try:
+                supabase.auth.sign_in_with_password({"email": email_login, "password": senha_login})
+                perfil_db = supabase.table("usuarios_perfis").select("perfil").eq("email", email_login).execute()
+                if perfil_db.data:
+                    st.session_state.perfil_usuario = perfil_db.data[0]["perfil"]
+                    st.session_state.email_usuario = email_login
+                    st.session_state.usuario_autenticado = True
+                    st.rerun()
+                else: 
+                    st.error("Perfil não encontrado.")
+            except: 
+                st.error("E-mail ou senha incorretos.")
+                
+    # Melhoria 2: Dica visível para os colaboradores instalarem o App na tela inicial
+    with st.sidebar.expander("📱 Como instalar o App"):
+        st.markdown("""
+        **No Celular (Android):**  
+        Abra no Chrome, clique nos **3 pontinhos** (topo direito) e escolha **Adicionar à tela inicial**.
+        
+        **No iPhone (iOS):**  
+        Abra no Safari, clique no ícone de **Compartilhar** (quadrado com seta para cima) e escolha **Adicionar à Tela de Início**.
+        
+        **No Notebook:**  
+        No Chrome, clique nos **3 pontinhos** > Salvar e compartilhar > **Criar Atalho...** (Marque a opção "Abrir como janela").
+        """)
+        
     return False
 
 if not gerenciar_autenticacao(): st.stop()
 
 email_logado = st.session_state.email_usuario
 perfil_banco = st.session_state.perfil_usuario
-EMAILS_ADMIN = ["jrafaelsiqueira@gmail.com", "gean@florestalamazonia.com"] 
+# Atualizado com os 3 emails de diretoria
+EMAILS_ADMIN = ["jrafaelsiqueira@gmail.com", "gean@florestalamazonia.com", "vivianemiyamura@gmail.com"] 
 
 if email_logado in EMAILS_ADMIN:
     st.sidebar.warning("👑 **MODO ADMINISTRADOR**")
