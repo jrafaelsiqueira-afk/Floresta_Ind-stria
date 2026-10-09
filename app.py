@@ -264,32 +264,56 @@ def render_dashboard_serraria():
     try:
         prod = supabase.table("producao_industrial").select("*").eq("tipo_produto", "Madeira Serrada").execute().data
         vend = supabase.table("vendas_serraria").select("*").execute().data
-    except: prod, vend = [], []
+        est_toras_db = supabase.table("estoque_toras").select("*").execute().data
+    except: prod, vend, est_toras_db = [], [], []
     
-    st.markdown("### 🪚 Dashboard Executivo - Serraria")
-    geral_m3 = sum(float(p.get('volume_serrado', 0) or 0) for p in prod) - sum(float(v.get('volume_vendido', 0) or 0) for v in vend)
-    st.metric("📦 Saldo Geral em Estoque de Madeira Serrada (m³)", f"{geral_m3:,.2f}")
+    st.markdown("### 🪚 Dashboard Executivo - Serraria (Toras e Serrados)")
     
+    # Mapear estoque físico digitado por espécie (último valor lançado)
+    estoque_digitado_por_especie = {}
+    for item in est_toras_db:
+        esp = item.get('especie')
+        vlr = float(item.get('volume_tora_digitado', 0) or 0)
+        estoque_digitado_por_especie[esp] = vlr
+
     dados = []
+    total_geral_serrado_est = 0
+    total_geral_tora_est = 0
+
     for esp in ESPECIES_MADEIRA:
-        pt = sum(float(p.get('volume_tora', 0) or 0) for p in prod if p.get('especie') == esp)
-        ps = sum(float(p.get('volume_serrado', 0) or 0) for p in prod if p.get('especie') == esp)
-        vs = sum(float(v.get('volume_vendido', 0) or 0) for v in vend if v.get('especie') == esp)
-        est = ps - vs
-        fator = (pt / ps) if ps > 0 else 0.0
+        pt_consumida = sum(float(p.get('volume_tora', 0) or 0) for p in prod if p.get('especie') == esp)
+        ps_serrado = sum(float(p.get('volume_serrado', 0) or 0) for p in prod if p.get('especie') == esp)
+        vs_vendido = sum(float(v.get('volume_vendido', 0) or 0) for v in vend if v.get('especie') == esp)
         
-        if pt > 0 or ps > 0 or vs > 0:
+        # Estoque de Madeira Serrada = Serrado Produzido - Vendido
+        est_serrado = ps_serrado - vs_vendido
+        total_geral_serrado_est += est_serrado
+
+        # Estoque de Tora = (Volume Físico Digitado pelo Operador) - (Tora Consumida/Serrada acumulada)
+        vol_fisico_base = estoque_digitado_por_especie.get(esp, 0.0)
+        est_tora = max(0.0, vol_fisico_base - pt_consumida)
+        total_geral_tora_est += est_tora
+
+        fator = (pt_consumida / ps_serrado) if ps_serrado > 0 else 0.0
+        
+        if vol_fisico_base > 0 or pt_consumida > 0 or ps_serrado > 0 or vs_vendido > 0:
             dados.append({
                 "Espécie": esp, 
-                "Tora Consumida (m³)": f"{pt:.2f}", 
-                "Serrado Produzido (m³)": f"{ps:.2f}", 
-                "Fator Conv. (Tora/Serrado)": f"{fator:.2f}", 
-                "Total Vendido (m³)": f"{vs:.2f}",
-                "Estoque Atual (m³)": f"{est:.2f}"
+                "Estoque Tora (m³)": f"{est_tora:.2f}",
+                "Tora Consumida (m³)": f"{pt_consumida:.2f}", 
+                "Serrado Produzido (m³)": f"{ps_serrado:.2f}", 
+                "Fator Conv.": f"{fator:.2f}", 
+                "Serrado Vendido (m³)": f"{vs_vendido:.2f}",
+                "Estoque Serrado (m³)": f"{est_serrado:.2f}"
             })
             
+    c1, c2 = st.columns(2)
+    c1.metric("📦 Saldo Geral Estoque de Toras (m³)", f"{total_geral_tora_est:,.2f}")
+    c2.metric("📦 Saldo Geral Estoque Madeira Serrada (m³)", f"{total_geral_serrado_est:,.2f}")
+    st.markdown("---")
+
     if dados: st.dataframe(pd.DataFrame(dados), use_container_width=True, hide_index=True)
-    else: st.info("Sem dados de produção ou vendas cadastrados para a Serraria.")
+    else: st.info("Sem dados de estoque, produção ou vendas cadastrados para a Serraria.")
     st.divider()
 
 def render_dashboard_carvoaria():
@@ -312,7 +336,7 @@ def render_dashboard_carvoaria():
                 })
                 
     if dados_carvao: st.dataframe(pd.DataFrame(dados_carvao), use_container_width=True, hide_index=True)
-    else: st.info("Sem dados de produção ou vendas cadastrados para a Carvoaria.")
+    else: st.info("Sem dados de produção ou vendas cadastrados para la Carvoaria.")
     st.divider()
 
 # ---------------------------------------------------------
@@ -370,40 +394,46 @@ def renderizar_painel_colaboradores_ativos():
 def renderizar_solicitacao_pagamento(perfil):
     st.subheader("💸 Solicitação de Ordens de Pagamento")
     tipo = st.radio("Selecione o Tipo:", ["Diária", "Adiantamento Salarial", "Pagamento Avulso (Fornecedores/Outros)"], horizontal=True)
-    col1, col2 = st.columns(2)
-    with col1:
-        vlr = st.number_input("Valor (R$)", min_value=0.01, value=100.0)
-        venc = st.date_input("Data de Vencimento")
-        desc = st.text_area("Descrição do Fato Gerador (Porquê do pagamento)")
-    with col2:
-        if tipo in ["Diária", "Adiantamento Salarial"]:
-            try: aptos = supabase.table("colaboradores").select("id, nome_completo, chave_pix").eq("status_fluxo", "Operação Liberada").execute().data
-            except: aptos = []
-            if aptos:
-                opcoes = {c['nome_completo']: c for c in aptos}
-                sel = opcoes[st.selectbox("Selecionar Colaborador:", list(opcoes.keys()))]
-                beneficiario = sel['nome_completo']
-                id_colab = sel['id']
-                pix = st.text_input("Chave PIX", value=sel.get('chave_pix', ''))
+    
+    with st.form("form_solicitacao_pagamento", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            vlr = st.number_input("Valor (R$)", min_value=0.01, value=100.0)
+            venc = st.date_input("Data de Vencimento")
+            desc = st.text_area("Descrição do Fato Gerador (Porquê do pagamento)")
+        with col2:
+            if tipo in ["Diária", "Adiantamento Salarial"]:
+                try: aptos = supabase.table("colaboradores").select("id, nome_completo, chave_pix").eq("status_fluxo", "Operação Liberada").execute().data
+                except: aptos = []
+                if aptos:
+                    opcoes = {c['nome_completo']: c for c in aptos}
+                    sel_nome = st.selectbox("Selecionar Colaborador:", list(opcoes.keys()))
+                    sel = opcoes[sel_nome]
+                    beneficiario = sel['nome_completo']
+                    id_colab = sel['id']
+                    pix = st.text_input("Chave PIX", value=sel.get('chave_pix', ''))
+                else:
+                    st.warning("Nenhum colaborador ativo encontrado.")
+                    beneficiario, id_colab, pix = "", None, ""
             else:
-                st.warning("Nenhum colaborador ativo encontrado.")
-                return
-        else:
-            beneficiario = st.text_input("Nome do Beneficiário")
-            id_colab = None
-            pix = st.text_input("Chave PIX")
-    if st.button("Gerar Ordem de Pagamento"):
-        if not beneficiario or not pix: st.error("Preencha o beneficiário e o PIX.")
-        else:
-            try:
-                supabase.table("lancamentos_financeiros").insert({
-                    "descricao": desc, "categoria": tipo, "valor": float(vlr), "data_vencimento": venc.strftime("%Y-%m-%d"), 
-                    "status_lancamento": "Aprovação Pendente Financeiro", "beneficiario": beneficiario, "pix": pix,
-                    "id_colaborador": id_colab, "criado_por": email_logado
-                }).execute()
-                st.success("✅ Ordem gerada e enviada para Aprovação do Financeiro (Módulo Aprovações)!")
-            except Exception as e:
-                st.error(f"Erro ao conectar com o banco. Atualize a página. {e}")
+                beneficiario = st.text_input("Nome do Beneficiário")
+                id_colab = None
+                pix = st.text_input("Chave PIX")
+                
+        submit_ordem = st.form_submit_button("Gerar Ordem de Pagamento")
+        if submit_ordem:
+            if not beneficiario or not pix: 
+                st.error("Preencha o beneficiário e o PIX.")
+            else:
+                try:
+                    supabase.table("lancamentos_financeiros").insert({
+                        "descricao": desc, "categoria": tipo, "valor": float(vlr), "data_vencimento": venc.strftime("%Y-%m-%d"), 
+                        "status_lancamento": "Aprovação Pendente Financeiro", "beneficiario": beneficiario, "pix": pix,
+                        "id_colaborador": id_colab, "criado_por": email_logado
+                    }).execute()
+                    st.success("✅ Ordem gerada e enviada para Aprovação do Financeiro (Módulo Aprovações) com sucesso!")
+                except Exception as e:
+                    st.error(f"Erro ao conectar com o banco. {e}")
 
 def renderizar_reprovados(email):
     try: reprovados = supabase.table("lancamentos_financeiros").select("*").eq("criado_por", email).eq("status_lancamento", "Reprovado").execute().data
@@ -427,7 +457,7 @@ def renderizar_reprovados(email):
                     supabase.table("lancamentos_financeiros").update({"status_lancamento": "Cancelado"}).eq("id", r['id']).execute(); st.rerun()
 
 # ---------------------------------------------------------
-# SISTEMA DE LOGIN SIMPLIFICADO (SEM BLOQUEIOS SUPABASE)
+# SISTEMA DE LOGIN SIMPLIFICADO
 # ---------------------------------------------------------
 def gerenciar_autenticacao():
     st.sidebar.title("🔐 Acesso ao Sistema")
@@ -446,7 +476,6 @@ def gerenciar_autenticacao():
             st.rerun()
         return True
 
-    # LISTA ATUALIZADA: Diretoria no topo!
     perfis = [
         "Selecione o seu setor...",
         "Proprietário / Diretoria (Gean)",
@@ -462,7 +491,6 @@ def gerenciar_autenticacao():
         perfil_selecionado = st.selectbox("Quem está a aceder?", perfis)
         
         senha_login = ""
-        # O campo de senha AGORA SÓ APARECE se a Diretoria for selecionada
         if perfil_selecionado == "Proprietário / Diretoria (Gean)":
             st.caption("Por favor, insira a palavra-passe executiva:")
             senha_login = st.text_input("Palavra-passe", type="password")
@@ -473,24 +501,21 @@ def gerenciar_autenticacao():
             if perfil_selecionado == "Selecione o seu setor...":
                 st.error("Por favor, selecione um setor na lista.")
             elif perfil_selecionado == "Proprietário / Diretoria (Gean)" and senha_login != "admin":
-                st.error("Palavra-passe incorreta para a Diretoria.")
+                st.error("Palavra-passe incorreta para la Diretoria.")
             else:
                 st.session_state.perfil_usuario = perfil_selecionado
                 if perfil_selecionado == "Proprietário / Diretoria (Gean)":
                     st.session_state.email_usuario = "gean@florestalamazonia.com"
                 else:
-                    st.session_state.email_usuario = "operacao_livre@florestalamazonia.com"
+                    st.session_state.email_usuario = f"{limpar_nome_arquivo(perfil_selecionado).lower()}@florestalamazonia.com"
                 
                 st.session_state.usuario_autenticado = True
                 st.rerun()
             
     with st.sidebar.expander("📱 Como instalar o App"):
         st.markdown("""
-        **No Celular (Android):**  
-        Abra no Chrome, clique nos **3 pontinhos** (topo direito) e escolha **Adicionar à tela inicial**.
-        
-        **No iPhone (iOS):**  
-        Abra no Safari, clique no ícone de **Compartilhar** (quadrado com seta para cima) e escolha **Adicionar à Tela de Início**.
+        **No Celular (Android):** Abrir no Chrome, 3 pontinhos -> Adicionar à tela inicial.
+        **No iPhone (iOS):** Abrir no Safari, Compartilhar -> Adicionar à Tela de Início.
         """)
         
     return False
@@ -513,8 +538,6 @@ else:
 
 if perfil_usuario == "RH Cadastral - Unificado":
     st.header("📋 Recursos Humanos")
-    
-    # --- ALERTA GIGANTE DE RETORNO DE TREINAMENTO (APTO OU INAPTO) ---
     try: retornos = supabase.table("colaboradores").select("*").in_("status_fluxo", ["Aguardando Contrato", "Inapto"]).execute().data
     except: retornos = []
     if retornos:
@@ -522,14 +545,13 @@ if perfil_usuario == "RH Cadastral - Unificado":
         for r in retornos:
             with st.expander(f"📌 {r['nome_completo']} | Status: {r['status_fluxo'].upper()}", expanded=True):
                 if r['status_fluxo'] == "Inapto":
-                    st.warning("⚠️ Este colaborador obteve nota abaixo de 70 no treinamento e foi reprovado pela operação.")
-                    if st.button("Dispensar (Desligamento)", key=f"disp_{r['id']}"):
+                    st.warning("⚠️ Reprovado no treinamento.")
+                    if st.button("Dispensar", key=f"disp_{r['id']}"):
                         supabase.table("colaboradores").update({"status_fluxo": "Desligamento da empresa"}).eq("id", r['id']).execute()
-                        st.success("Colaborador encaminhado para Desligamento.")
                         st.rerun()
                 else:
-                    st.success("✅ Apto! Envie para Contabilidade. Faça o upload do Contrato Assinado para liberar a Operação.")
-                    contrato_up = st.file_uploader("Anexar Contrato de Trabalho Assinado (PDF/Imagem)", key=f"ct_up_{r['id']}")
+                    st.success("✅ Apto! Faça o upload do Contrato Assinado.")
+                    contrato_up = st.file_uploader("Contrato de Trabalho Assinado (PDF/Imagem)", key=f"ct_up_{r['id']}")
                     if contrato_up:
                         if st.button("🌟 Ativar para Operação", key=f"ativar_{r['id']}", type="primary"):
                             nm_limpo = limpar_nome_arquivo(r['nome_completo'])
@@ -540,7 +562,7 @@ if perfil_usuario == "RH Cadastral - Unificado":
                             except: pass
                             url_ct = supabase.storage.from_(BUCKET_STORAGE).get_public_url(caminho)
                             supabase.table("colaboradores").update({"status_fluxo": "Operação Liberada", "url_contrato_trabalho": url_ct}).eq("id", r['id']).execute()
-                            st.success("Colaborador ATIVO na Operação com sucesso!")
+                            st.success("Ativado com sucesso!")
                             st.rerun()
         st.markdown("---")
     
@@ -548,62 +570,34 @@ if perfil_usuario == "RH Cadastral - Unificado":
     
     with aba_cadastro:
         if "cadastro_concluido" in st.session_state:
-            st.success("✅ Colaborador cadastrado com sucesso! O processo foi enviado automaticamente para a fila de Treinamento do Setor Operacional correspondente.")
-            st.download_button("📥 Baixar Ficha de Admissão e EPI Completa (PDF)", st.session_state.cadastro_concluido['pdf'], file_name=f"Cadastro_{st.session_state.cadastro_concluido['nome']}.pdf", mime="application/pdf")
-            st.info("Imprima este documento e guarde a via física assinada para auditoria FSC.")
-            if st.button("🔙 Limpar e Fazer Novo Cadastro"):
+            st.success("✅ Colaborador cadastrado com sucesso!")
+            st.download_button("📥 Baixar Ficha de Admissão e EPI (PDF)", st.session_state.cadastro_concluido['pdf'], file_name=f"Cadastro_{st.session_state.cadastro_concluido['nome']}.pdf", mime="application/pdf")
+            if st.button("🔙 Novo Cadastro"):
                 del st.session_state.cadastro_concluido
                 st.rerun()
         else:
             EPI_POR_SETOR = {
                 "Indústria / Carvoaria": {
-                    "Soldador": ["PROTETOR AURICULAR TIPO PLUG", "AVENTAL DE RASPA", "MANGOTE", "MÁSCARA DE SOLDA", "RESPIRADOR", "LUVA RASPA", "BOTAS COM BIQUEIRA", "LUVA NITRILICA"],
-                    "Serviços Gerais": ["CAPACETE COM JUGULAR", "ÓCULOS DE SEGURANÇA", "BOTAS COM BIQUEIRA", "LUVA PIGMENTADA"],
+                    "Soldador": ["PROTETOR AURICULAR", "AVENTAL DE RASPA", "MANGOTE", "MÁSCARA DE SOLDA", "RESPIRADOR", "LUVA RASPA", "BOTAS COM BIQUEIRA"],
                     "Serrador": ["CAPACETE COM JUGULAR", "ÓCULOS DE SEGURANÇA", "BOTAS COM BIQUEIRA", "LUVA PIGMENTADA"],
-                    "Romaneador Nível I (Serraria)": ["CAPACETE COM JUGULAR", "ÓCULOS DE SEGURANÇA", "BOTAS COM BIQUEIRA", "LUVA PIGMENTADA"],
-                    "Prancheiro": ["CAPACETE COM JUGULAR", "ÓCULOS DE SEGURANÇA", "BOTAS COM BIQUEIRA", "LUVA PIGMENTADA"],
-                    "Multileiro": ["CAPACETE COM JUGULAR", "ÓCULOS DE SEGURANÇA", "BOTAS COM BIQUEIRA", "LUVA PIGMENTADA"],
-                    "Gerente de Produção": ["CAPACETE COM JUGULAR", "ÓCULOS DE SEGURANÇA", "BOTAS COM BIQUEIRA", "LUVA PIGMENTADA"],
-                    "Empilhador": ["CAPACETE COM JUGULAR", "ÓCULOS DE SEGURANÇA", "BOTAS COM BIQUEIRA", "LUVA PIGMENTADA"],
-                    "Destopador": ["CAPACETE COM JUGULAR", "ÓCULOS DE SEGURANÇA", "BOTAS COM BIQUEIRA", "LUVA PIGMENTADA"],
-                    "Circuleiro de Aproveitamento": ["CAPACETE COM JUGULAR", "ÓCULOS DE SEGURANÇA", "BOTAS COM BIQUEIRA", "LUVA PIGMENTADA"],
-                    "Circuleiro": ["CAPACETE COM JUGULAR", "ÓCULOS DE SEGURANÇA", "BOTAS COM BIQUEIRA", "LUVA PIGMENTADA"],
-                    "Bitoleiro": ["CAPACETE COM JUGULAR", "MÁSCARA PFF 2", "ÓCULOS DE SEGURANÇA", "BOTAS COM BIQUEIRA", "LUVA PIGMENTADA"],
-                    "Almoxarife": ["CAPACETE COM JUGULAR", "ÓCULOS DE SEGURANÇA", "BOTAS COM BIQUEIRA", "LUVA PIGMENTADA"],
-                    "Ajudante Geral Nível 1 (Serraria)": ["CAPACETE COM JUGULAR", "MÁSCARA PFF 2", "ÓCULOS DE SEGURANÇA", "BOTAS COM BIQUEIRA", "LUVA PIGMENTADA"],
-                    "Ajudante de Multileiro": ["CAPACETE COM JUGULAR", "MÁSCARA PFF 2", "ÓCULOS DE SEGURANÇA", "BOTAS COM BIQUEIRA", "LUVA PIGMENTADA"],
-                    "Ajudante de Destopador": ["CAPACETE COM JUGULAR", "MÁSCARA PFF 2", "ÓCULOS DE SEGURANÇA", "BOTAS COM BIQUEIRA", "LUVA PIGMENTADA"],
-                    "Amarrador de Ripas": ["CAPACETE COM JUGULAR", "MÁSCARA PFF 2", "ÓCULOS DE SEGURANÇA", "BOTAS COM BIQUEIRA", "LUVA PIGMENTADA"],
-                    "Laminador": ["PROTETOR AURICULAR PLUG", "LUVA NITRICA", "ÓCULOS DE SEGURANÇA", "MÁSCARA PFF 2", "LUVA PIGMENTADA", "AVENTAL RASPA"],
-                    "Ajudante Geral Nível 5 (Carvoaria)": ["PROTETOR AURICULAR PLUG", "RESPIRADOR", "LUVAS EMBORRACHADAS", "CAPACETE COM JUGULAR", "BOTAS COM BIQUEIRA", "CALÇA DE MOTOSSERRISTA"],
-                    "Ajudante Geral Nível 4 (Carvoaria)": ["PROTETOR AURICULAR PLUG", "RESPIRADOR", "LUVAS EMBORRACHADAS", "CAPACETE COM JUGULAR", "BOTAS COM BIQUEIRA", "CALÇA DE MOTOSSERRISTA"],
-                    "Carbonizador": ["PROTETOR AURICULAR PLUG", "RESPIRADOR", "LUVAS EMBORRACHADAS", "CAPACETE COM JUGULAR", "BOTAS COM BIQUEIRA", "CALÇA DE MOTOSSERRISTA"]
+                    "Carbonizador": ["PROTETOR AURICULAR", "RESPIRADOR", "LUVAS EMBORRACHADAS", "CAPACETE COM JUGULAR", "BOTAS COM BIQUEIRA"]
                 },
                 "Floresta": {
-                    "Operador de Motosserra": ["CAPACETE MOTOSSERRISTA", "MÁSCARA PFF 2", "LUVA DE MOTOSSERRISTA", "CALÇA DE MOTOSSERRISTA", "BOTAS COM BIQUEIRA", "CAMISETA MANGA LONGA", "PERNEIRAS"],
-                    "Romaneador Nível II": ["PROTETOR AURICULAR", "MÁSCARA PFF 2", "ÓCULOS DE SEGURANÇA", "BOTAS COM BIQUEIRA", "PERNEIRAS", "LUVA RASPA", "LUVA PIGMENTADA", "CAMISETA MANGA LONGA", "CAPACETE COM JUGULAR"],
-                    "Planejador": ["PROTETOR AURICULAR", "MÁSCARA PFF 2", "ÓCULOS DE SEGURANÇA", "BOTAS COM BIQUEIRA", "PERNEIRAS", "LUVA RASPA", "LUVA PIGMENTADA", "CAMISETA MANGA LONGA", "CAPACETE COM JUGULAR"],
-                    "Gerente de Produção e Operações": ["PROTETOR AURICULAR", "MÁSCARA PFF 2", "ÓCULOS DE SEGURANÇA", "BOTAS COM BIQUEIRA", "PERNEIRAS", "LUVA RASPA", "LUVA PIGMENTADA", "CAMISETA MANGA LONGA", "CAPACETE COM JUGULAR"],
-                    "Almoxarife": ["PROTETOR AURICULAR", "MÁSCARA PFF 2", "ÓCULOS DE SEGURANÇA", "BOTAS COM BIQUEIRA", "PERNEIRAS", "LUVA RASPA", "LUVA PIGMENTADA", "CAMISETA MANGA LONGA", "CAPACETE COM JUGULAR"],
-                    "Ajudante Geral Nível 3 (Alojamento)": ["AVENTAL PVC", "ÓCULOS DE SEGURANÇA", "LUVA PVC", "BOTAS COM BIQUEIRA", "LUVA NITRICA"],
-                    "Ajudante Geral Nível 2 (Extração)": ["PROTETOR AURICULAR", "MÁSCARA PFF 2", "ÓCULOS DE SEGURANÇA", "BOTAS COM BIQUEIRA", "PERNEIRAS", "LUVA RASPA", "LUVA PIGMENTADA", "CAMISETA MANGA LONGA", "CAPACETE COM JUGULAR"],
-                    "Cozinheira": ["AVENTAL IMPERMEÁVEL", "LUVAS NITRILICA", "ÓCULOS DE SEGURANÇA", "BOTAS COM BIQUEIRA", "TOUCA DESCARTÁVEL", "LUVAS ANTI-CORTE"],
-                    "Operador de Máquinas Pesadas": ["PROTETOR AURICULAR CONCHA", "LUVAS NITRILICA", "ÓCULOS DE SEGURANÇA", "MÁSCARA PFF 2", "VESTIMENTA MANGAS LONGAS", "BOTAS COM BIQUEIRA", "PERNEIRAS"],
-                    "Motorista de Caminhão": ["PROTETOR AURICULAR", "LUVAS NITRILICA", "ÓCULOS DE SEGURANÇA", "MÁSCARA PFF 2", "VESTIMENTA MANGAS LONGAS", "BOTAS COM BIQUEIRA", "PERNEIRAS"]
+                    "Operador de Motosserra": ["CAPACETE MOTOSSERRISTA", "MÁSCARA PFF 2", "LUVA DE MOTOSSERRISTA", "CALÇA DE MOTOSSERRISTA", "BOTAS COM BIQUEIRA", "PERNEIRAS"],
+                    "Motorista de Caminhão": ["PROTETOR AURICULAR", "LUVAS NITRILICA", "ÓCULOS DE SEGURANÇA", "BOTAS COM BIQUEIRA"]
                 }
             }
             c_nome, c_cargo = st.columns(2)
             with c_nome:
                 nome = st.text_input("Nome Completo")
-                cpf = st.text_input("CPF (Somente números ou pontuado)")
+                cpf = st.text_input("CPF")
                 chave_pix_cad = st.text_input("Chave PIX")
                 data_adm = st.date_input("Data de Admissão")
             with c_cargo:
                 setor_escolhido = st.selectbox("Setor", list(EPI_POR_SETOR.keys()))
                 cargo_escolhido = st.selectbox("Cargo", list(EPI_POR_SETOR[setor_escolhido].keys()))
                 contato_emergencia = st.text_input("📞 Contato Emergência")
-                st.write("⛺ **Alojamento Rural:**")
-                opcao_alojamento = st.radio("Escolha:", ["Rede", "Cama", "Não Alojado"], horizontal=True)
+                opcao_alojamento = st.radio("Alojamento Rural:", ["Rede", "Cama", "Não Alojado"], horizontal=True)
             
             def anexar_doc(label, chave):
                 st.markdown(f"**{label}**")
@@ -618,8 +612,7 @@ if perfil_usuario == "RH Cadastral - Unificado":
             doc_pessoal = anexar_doc("2. Documento Pessoal", "doc_pess")
             vacina_doc = anexar_doc("3. Vacinação", "vac")
             residencia_doc = anexar_doc("4. Residência", "res")
-            if st.checkbox("Possui filhos < 14 anos?"): certidao_doc = anexar_doc("5. Certidão Nascimento Filho(s)", "cert")
-            else: certidao_doc = None
+            certidao_doc = anexar_doc("5. Certidão Nascimento Filho(s)", "cert") if st.checkbox("Possui filhos < 14 anos?") else None
             
             st.subheader("👕 EPIs e Uniforme")
             epis_exigidos = EPI_POR_SETOR[setor_escolhido][cargo_escolhido].copy()
@@ -634,14 +627,8 @@ if perfil_usuario == "RH Cadastral - Unificado":
                 cd = cepi1 if i % 2 == 0 else cepi2
                 chk, cx = cd.columns([6, 4])
                 checado = chk.checkbox(epi, key=f"epi_{i}")
-                if "BOTA" in epi.upper():
-                    ca, num = cx.columns(2)
-                    ca_val = ca.text_input("CA", key=f"ca_{i}", label_visibility="collapsed")
-                    num_bota = num.text_input("Nº", value="41", key=f"num_{i}", label_visibility="collapsed")
-                    if checado: epis_marcados.append(f"{epi} (CA: {ca_val} | Num: {num_bota})")
-                else:
-                    ca_val = cx.text_input("CA", key=f"ca_{i}", label_visibility="collapsed")
-                    if checado: epis_marcados.append(f"{epi} (CA: {ca_val})")
+                ca_val = cx.text_input("CA", key=f"ca_{i}", label_visibility="collapsed")
+                if checado: epis_marcados.append(f"{epi} (CA: {ca_val})")
             
             conduta = st.checkbox("Aceito Código Conduta")
             autoriza_imagem = st.radio("Autoriza imagem?", ["Sim", "Não"], horizontal=True)
@@ -649,7 +636,7 @@ if perfil_usuario == "RH Cadastral - Unificado":
             st.write("📷 **Foto Rosto**")
             foto_capturada = None
             if "foto_temp" not in st.session_state: st.session_state.foto_temp = None
-            if st.checkbox("📸 Câmera Foto"):
+            if st.checkbox("📸 Ligar Câmera Foto Rosto"):
                 fi = st.camera_input("Tirar Foto", key="cam_rosto")
                 if fi is not None: st.session_state.foto_temp = fi
             if st.session_state.foto_temp is not None:
@@ -704,7 +691,6 @@ if perfil_usuario == "RH Cadastral - Unificado":
         st.subheader("Processos de Desligamento")
         try: desligados = supabase.table("colaboradores").select("*").in_("status_fluxo", ["Não Habilitado", "Desligamento da empresa"]).execute().data
         except: desligados = []
-        if not desligados: st.info("Nenhum processo pendente.")
         for colab in desligados:
             with st.expander(f"⚠️ {colab.get('nome_completo','')} - Status: {colab.get('status_fluxo','')}"):
                 try: faltas_colab = supabase.table("registro_faltas").select("*").eq("id_colaborador", colab['id']).execute().data
@@ -721,8 +707,7 @@ if perfil_usuario == "RH Cadastral - Unificado":
         st.subheader("Envio de Holerites")
         try: ativos_rh = supabase.table("colaboradores").select("id, nome_completo, cpf, cargo, setor, chave_pix").eq("status_fluxo", "Operação Liberada").execute().data
         except: ativos_rh = []
-        if not ativos_rh: st.warning("Nenhum colaborador ativo.")
-        else:
+        if ativos_rh:
             opcoes_folha = {f"{c['nome_completo']} ({c['cargo']})": c for c in ativos_rh}
             colab_sel_str = st.selectbox("Colaborador:", list(opcoes_folha.keys()))
             colab_folha = opcoes_folha[colab_sel_str]
@@ -737,7 +722,7 @@ if perfil_usuario == "RH Cadastral - Unificado":
                             "descricao": f"Folha de Pagamento | Ref: {mes_ref}", "categoria": "Folha de Pagamento", "valor": float(valor_liq),
                             "beneficiario": colab_folha['nome_completo'], "pix": colab_folha.get('chave_pix', ''),
                             "id_colaborador": colab_folha['id'], "data_vencimento": datetime.now().strftime("%Y-%m-%d"), 
-                            "status_lancamento": "Aprovação Pendente Financeiro"
+                            "status_lancamento": "Aprovação Pendente Financeiro", "criado_por": email_logado
                         }).execute()
                         st.success("✅ Enviado!")
                     except Exception as e: st.error(f"Erro no banco: {e}")
@@ -756,69 +741,47 @@ if perfil_usuario == "RH Cadastral - Unificado":
                 except: faltas = []
                 pdf = gerar_pdf_consolidado_folha(mes_atual, adiantamentos, faltas)
                 st.download_button("📥 Baixar PDF Contabilidade", pdf, f"Consolidado_{mes_atual}.pdf", "application/pdf")
-        
         with c2:
             st.write("📊 **Importação de Folha em Massa (Excel/CSV)**")
             arq_folha = st.file_uploader("Subir Planilha de Pagamentos", type=["xlsx", "csv"])
-            
             if st.button("Processar Planilha e Gerar Pagamentos") and arq_folha:
                 try:
-                    if arq_folha.name.endswith('.csv'):
-                        df_folha = pd.read_csv(arq_folha)
-                    else:
-                        df_folha = pd.read_excel(arq_folha)
-                    
+                    df_folha = pd.read_csv(arq_folha) if arq_folha.name.endswith('.csv') else pd.read_excel(arq_folha)
                     df_folha.columns = df_folha.columns.str.strip()
                     cols = {str(col).lower(): col for col in df_folha.columns}
-                    
-                    col_nome = cols.get('nome', 'Nome')
-                    col_pix = cols.get('chave pix', cols.get('pix', 'Chave PIX'))
-                    col_valor = cols.get('valor liquido', cols.get('valor', 'Valor Liquido'))
-
+                    col_nome, col_pix, col_valor = cols.get('nome', 'Nome'), cols.get('chave pix', 'PIX'), cols.get('valor liquido', 'Valor')
                     ordens_geradas = 0
-                    for index, row in df_folha.iterrows():
+                    for _, row in df_folha.iterrows():
                         if pd.isna(row.get(col_nome)): continue
-                        
                         val_str = str(row.get(col_valor, 0)).replace('R$', '').replace('.', '').replace(',', '.').strip()
                         try: val_float = float(val_str)
                         except: val_float = 0.0
-
                         if val_float > 0:
                             supabase.table("lancamentos_financeiros").insert({
-                                "descricao": f"Folha de Pagamento em Massa - {mes_atual}",
-                                "categoria": "Folha de Pagamento",
-                                "valor": val_float,
-                                "beneficiario": str(row[col_nome]),
-                                "pix": str(row.get(col_pix, '')),
-                                "data_vencimento": datetime.now().strftime("%Y-%m-%d"),
-                                "status_lancamento": "Lançado - Aguardando Pagamento", 
-                                "criado_por": email_logado
+                                "descricao": f"Folha em Massa - {mes_atual}", "categoria": "Folha de Pagamento", "valor": val_float,
+                                "beneficiario": str(row[col_nome]), "pix": str(row.get(col_pix, '')),
+                                "data_vencimento": datetime.now().strftime("%Y-%m-%d"), "status_lancamento": "Lançado - Aguardando Pagamento", "criado_por": email_logado
                             }).execute()
                             ordens_geradas += 1
-                            
-                    st.success(f"✅ Sucesso! {ordens_geradas} ordens foram geradas e enviadas ao módulo de Execução.")
-                except Exception as e:
-                    st.error(f"Erro ao processar a planilha. Certifique-se de que o arquivo não está corrompido. Detalhe técnico: {e}")
+                    st.success(f"✅ Sucesso! {ordens_geradas} ordens geradas.")
+                except Exception as e: st.error(f"Erro: {e}")
 
 
 elif perfil_usuario == "Engenharia Florestal (Jean Gustavo)":
     st.header("🌲 Engenharia Florestal (Campo e UMF)")
-    
     try: treinandos = supabase.table("colaboradores").select("*").eq("status_fluxo", "Aguardando Treinamento").eq("setor", "Colheita").execute().data
     except: treinandos = []
     if treinandos:
         st.error("⚠️ ALERTA DE NOVO COLABORADOR: TREINAMENTO PENDENTE")
         for t in treinandos:
             with st.expander(f"📚 Avaliar: {t['nome_completo']} ({t['cargo']})", expanded=True):
-                st.write("Um novo colaborador foi registado pelo RH. Realize o treinamento de campo e suba a nota.")
-                nota = st.number_input("Nota do Treinamento (0 a 100)", 0, 100, 0, key=f"n_{t['id']}")
-                cert = st.file_uploader("Upload do Certificado de Treinamento", key=f"cert_{t['id']}")
-                if st.button("Finalizar Avaliação e Enviar para RH", key=f"btn_t_{t['id']}"):
-                    if not cert: st.error("O upload do certificado é obrigatório!")
+                nota = st.number_input("Nota (0 a 100)", 0, 100, 0, key=f"n_{t['id']}")
+                cert = st.file_uploader("Certificado de Treinamento", key=f"cert_{t['id']}")
+                if st.button("Finalizar Avaliação", key=f"btn_t_{t['id']}"):
+                    if not cert: st.error("O certificado é obrigatório!")
                     else:
                         status = "Aguardando Contrato" if nota >= 70 else "Inapto"
                         supabase.table("colaboradores").update({"status_fluxo": status}).eq("id", t['id']).execute()
-                        st.success("Avaliação enviada ao RH!")
                         st.rerun()
         st.markdown("---")
         
@@ -831,26 +794,25 @@ elif perfil_usuario == "Engenharia Florestal (Jean Gustavo)":
             c1, c2 = st.columns(2)
             with c1:
                 st.subheader("🌲 Lançamento Produção")
-                with st.form("form_prod_flor"):
+                with st.form("form_prod_flor", clear_on_submit=True):
                     dt = st.date_input("Data")
                     vol_arr = st.number_input("Tora Arrastada (m³)", min_value=0.0)
                     vol_rom = st.number_input("Tora Romaneada (m³)", min_value=0.0)
                     vol_trans = st.number_input("Tora Transportada p/ Fora UMF (m³)", min_value=0.0)
                     if st.form_submit_button("Salvar Produção"):
-                        supabase.table("producao_diaria").insert({"data_producao": dt.strftime("%Y-%m-%d"),"volume_arrastado": float(vol_arr), "volume_romaneado": float(vol_rom), "volume_transportado": float(vol_trans)}).execute()
+                        supabase.table("producao_diaria").insert({"data_producao": dt.strftime("%Y-%m-%d"), "volume_arrastado": float(vol_arr), "volume_romaneado": float(vol_rom), "volume_transportado": float(vol_trans)}).execute()
                         st.success("Salvo!")
             with c2:
                 st.subheader("🤝 Lançamento Vendas (Pátio)")
-                with st.form("form_venda_tora"):
+                with st.form("form_venda_tora", clear_on_submit=True):
                     dt_v = st.date_input("Data")
                     vol_vendido = st.number_input("Toras Vendidas (m³)", min_value=0.0)
                     if st.form_submit_button("Lançar Venda"):
                         supabase.table("vendas_tora").insert({"data_venda": dt_v.strftime("%Y-%m-%d"), "volume_vendido": float(vol_vendido), "cadastrado_por": email_logado}).execute()
-                        st.success("Registado!")
+                        st.success("Registrado!")
         with aba_dash: render_dashboard_floresta()
         with aba_upload:
-            st.info("Colunas: Data, Arrastado, Romaneado, Transportado.")
-            arq = st.file_uploader("Ficheiro", type=["csv", "xlsx"])
+            arq = st.file_uploader("Ficheiro CSV/Excel", type=["csv", "xlsx"])
             if st.button("Processar") and arq:
                 try:
                     df = pd.read_csv(arq) if arq.name.endswith('.csv') else pd.read_excel(arq)
@@ -878,24 +840,24 @@ elif perfil_usuario == "Operacional Indústria - Carvoaria (Nelson)":
             c1, c2 = st.columns(2)
             with c1:
                 st.subheader("🏭 Lançar Produção")
-                with st.form("form_prod_carv"):
+                with st.form("form_prod_carv", clear_on_submit=True):
                     dt_p = st.date_input("Data Produção")
                     tam = st.selectbox("Saca", [3, 6, 25])
                     marca = st.selectbox("Marca", ["Saca_Marisa", "Brasa_Brasil"])
-                    qtd = st.number_input("Quantidade Produzida", min_value=1)
+                    qtd = st.number_input("Quantidade", min_value=1)
                     if st.form_submit_button("Salvar Produção"):
                         supabase.table("producao_carvao").insert({"data_producao": dt_p.strftime("%Y-%m-%d"), "tamanho_saca": tam, "marca": marca, "quantidade": float(qtd), "cadastrado_por": email_logado}).execute()
                         st.success("Salvo!")
             with c2:
                 st.subheader("🤝 Lançar Venda")
-                with st.form("form_vend_carv"):
+                with st.form("form_vend_carv", clear_on_submit=True):
                     dt_v = st.date_input("Data Venda")
                     tam_v = st.selectbox("Saca Vendida", [3, 6, 25])
                     marca_v = st.selectbox("Marca Vendida", ["Saca_Marisa", "Brasa_Brasil"])
                     qtd_v = st.number_input("Quantidade Vendida", min_value=1)
                     if st.form_submit_button("Lançar Venda"):
                         supabase.table("vendas_carvao").insert({"data_venda": dt_v.strftime("%Y-%m-%d"), "tamanho_saca": tam_v, "marca": marca_v, "quantidade": float(qtd_v), "cadastrado_por": email_logado}).execute()
-                        st.success("Registado!")
+                        st.success("Registrado!")
         with aba_dash: render_dashboard_carvoaria()
 
     elif menu == "💸 Ordens de Pagamento":
@@ -908,45 +870,62 @@ elif perfil_usuario == "Operacional Indústria - Carvoaria (Nelson)":
 
 elif perfil_usuario == "Operacional Indústria - Serraria (Felipe)":
     st.header("🪚 Indústria: Serraria")
-    
     try: treinandos = supabase.table("colaboradores").select("*").eq("status_fluxo", "Aguardando Treinamento").eq("setor", "Indústria").execute().data
     except: treinandos = []
     if treinandos:
         st.error("⚠️ ALERTA DE NOVO COLABORADOR: TREINAMENTO PENDENTE")
         for t in treinandos:
             with st.expander(f"📚 Avaliar: {t['nome_completo']} ({t['cargo']})", expanded=True):
-                st.write("Um novo colaborador da Indústria foi registado pelo RH. Realize o treinamento e suba a nota.")
-                nota = st.number_input("Nota do Treinamento (0 a 100)", 0, 100, 0, key=f"n_{t['id']}")
-                cert = st.file_uploader("Upload do Certificado de Treinamento", key=f"cert_{t['id']}")
-                if st.button("Finalizar Avaliação e Enviar para RH", key=f"btn_t_{t['id']}"):
-                    if not cert: st.error("O upload do certificado é obrigatório!")
+                nota = st.number_input("Nota (0 a 100)", 0, 100, 0, key=f"n_{t['id']}")
+                cert = st.file_uploader("Certificado", key=f"cert_{t['id']}")
+                if st.button("Finalizar Avaliação", key=f"btn_t_{t['id']}"):
+                    if not cert: st.error("O certificado é obrigatório!")
                     else:
                         status = "Aguardando Contrato" if nota >= 70 else "Inapto"
                         supabase.table("colaboradores").update({"status_fluxo": status}).eq("id", t['id']).execute()
-                        st.success("Avaliação enviada ao RH!")
                         st.rerun()
         st.markdown("---")
 
-    menu = st.radio("Ações:", ["🪚 Produção e Vendas (Madeira)", "💸 Ordens de Pagamento", "❌ Registro de Faltas"], horizontal=True)
+    menu = st.radio("Ações:", ["🪚 Produção, Estoque Toras e Vendas", "💸 Ordens de Pagamento", "❌ Registro de Faltas"], horizontal=True)
     st.divider()
     
-    if menu == "🪚 Produção e Vendas (Madeira)":
-        aba_in, aba_dash = st.tabs(["📝 Lançamentos Diários", "📈 Dashboard Profissional"])
+    if menu == "🪚 Produção, Estoque Toras e Vendas":
+        aba_estoque_tora, aba_in, aba_dash = st.tabs(["🪵 Atualizar Estoque Toras", "📝 Lançamentos Diários", "📈 Dashboard Profissional"])
+        
+        with aba_estoque_tora:
+            st.subheader("🪵 Lançamento / Atualização de Estoque Físico de Toras")
+            st.info("Digite o estoque físico atual de toras para cada espécie. O sistema fará o abatimento automático conforme a serragem diária.")
+            with st.form("form_estoque_tora"):
+                esp_est = st.selectbox("Espécie de Tora", ESPECIES_MADEIRA, key="est_esp_tora")
+                vol_est_digitado = st.number_input("Volume Físico Atual no Pátio (m³)", min_value=0.0, step=0.1, key="est_vol_tora")
+                if st.form_submit_button("Salvar / Atualizar Estoque de Toras"):
+                    try:
+                        # Salva na tabela estoque_toras
+                        supabase.table("estoque_toras").insert({
+                            "especie": esp_est, 
+                            "volume_tora_digitado": float(vol_est_digitado), 
+                            "atualizado_por": email_logado,
+                            "data_atualizacao": datetime.now().strftime("%Y-%m-%d")
+                        }).execute()
+                        st.success(f"✅ Estoque de toras para {esp_est} atualizado para {vol_est_digitado} m³ com sucesso!")
+                    except Exception as e:
+                        st.error(f"Erro ao salvar estoque: {e}")
+
         with aba_in:
             c1, c2 = st.columns(2)
             with c1:
                 st.subheader("🏭 Tora em Madeira Serrada")
-                with st.form("form_prod_serra"):
+                with st.form("form_prod_serra", clear_on_submit=True):
                     dt_p = st.date_input("Data")
                     esp = st.selectbox("Espécie de Tora", ESPECIES_MADEIRA)
-                    vol_t = st.number_input("Tora Serrada no Dia (m³)", min_value=0.01)
+                    vol_t = st.number_input("Tora Consumida no Dia (m³)", min_value=0.01)
                     vol_m = st.number_input("Serrado Obtido no Dia (m³)", min_value=0.01)
                     if st.form_submit_button("Salvar Produção"):
                         supabase.table("producao_industrial").insert({"tipo_produto": "Madeira Serrada", "data_producao": dt_p.strftime("%Y-%m-%d"), "especie": esp, "volume_tora": float(vol_t), "volume_serrado": float(vol_m), "cadastrado_por": email_logado}).execute()
                         st.success("Salvo!")
             with c2:
                 st.subheader("🤝 Lançar Venda de Serrados")
-                with st.form("form_venda_serra"):
+                with st.form("form_venda_serra", clear_on_submit=True):
                     dt_v = st.date_input("Data Venda")
                     esp_v = st.selectbox("Espécie Vendida", ESPECIES_MADEIRA)
                     vol_v = st.number_input("Volume Vendido (m³)", min_value=0.01)
@@ -969,10 +948,10 @@ elif perfil_usuario == "Lançamentos Financeiros (Jonas)":
     with aba_pend:
         try: pendentes = supabase.table("lancamentos_financeiros").select("*").eq("status_lancamento", "Aprovação Pendente Financeiro").execute().data
         except: pendentes = []
-        if not pendentes: st.success("Sem ordens.")
+        if not pendentes: st.success("Sem ordens pendentes.")
         for p in pendentes:
             v_atual = float(p.get('valor', 0) or 0)
-            with st.expander(f"{p.get('categoria', '')} - {p.get('beneficiario', '')} | R$ {v_atual:,.2f}"):
+            with st.expander(f"[Aprovação Pendente] {p.get('categoria', '')} - Beneficiário: {p.get('beneficiario', '')} | R$ {v_atual:,.2f} (Criado por: {p.get('criado_por', 'N/A')})"):
                 st.write(f"**Desc:** {p.get('descricao', '')} | **PIX:** {p.get('pix', '')}")
                 motivo = st.text_input("Motivo Recusa", key=f"motivo_{p['id']}")
                 c1, c2 = st.columns(2)
@@ -987,7 +966,7 @@ elif perfil_usuario == "Lançamentos Financeiros (Jonas)":
         except: pagos = []
         for pg in pagos:
             v_atual = float(pg.get('valor', 0) or 0)
-            with st.expander(f"✅ R$ {v_atual:,.2f} - {pg.get('beneficiario', '')}"):
+            with st.expander(f"[Aguardando Arquivamento] {pg.get('beneficiario', '')} - R$ {v_atual:,.2f}"):
                 if st.button("Arquivar Lançamento", key=f"arq_{pg['id']}"):
                     supabase.table("lancamentos_financeiros").update({"status_lancamento": "Arquivado"}).eq("id", pg['id']).execute(); st.rerun()
 
@@ -999,13 +978,28 @@ elif perfil_usuario == "Execução de Pagamentos (Matheus)":
     if not contas: st.info("Nenhum pagamento pendente no momento.")
     for c in contas:
         v_atual = float(c.get('valor', 0) or 0)
-        with st.expander(f"💰 {c.get('beneficiario', '')} - R$ {v_atual:,.2f} ({c.get('categoria', '')})"):
+        with st.expander(f"[Fila de Pagamento] {c.get('beneficiario', '')} - R$ {v_atual:,.2f} ({c.get('categoria', '')})"):
             st.write(f"**Desc:** {c.get('descricao', '')} | **PIX:** `{c.get('pix', '')}`")
             if c.get('pix') and st.button("👁️ Mostrar QR-Code", key=f"qr_{c['id']}"):
                 payload = formata_pix(c.get('pix', ''), v_atual, c.get('beneficiario', ''))
                 st.image(f"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data={payload}")
+            
+            st.markdown("---")
+            st.markdown("📎 **Digitalizar ou Anexar Comprovante de Pagamento**")
+            
+            # Opção de Anexar PDF ou Imagem
+            comp_arquivo = st.file_uploader("Anexar Comprovante (PDF ou Imagem)", type=["pdf", "png", "jpg", "jpeg"], key=f"up_comp_{c['id']}")
+            
+            # Opção de Câmera (Desligada por padrão, só abre se marcar o checkbox)
+            comp_camera = None
+            if st.checkbox("📸 Ligar Câmera para Digitalizar Comprovante", key=f"chk_cam_comp_{c['id']}"):
+                comp_camera = st.camera_input("Tirar Foto do Comprovante", key=f"cam_comp_{c['id']}")
+            
             if st.button("✅ Pagamento Realizado", type="primary", key=f"pag_{c['id']}"):
-                supabase.table("lancamentos_financeiros").update({"status_lancamento": "Pago - Aguardando Arquivamento"}).eq("id", c['id']).execute(); st.rerun()
+                # Aqui você pode salvar o comprovante no Supabase Storage se desejar
+                supabase.table("lancamentos_financeiros").update({"status_lancamento": "Pago - Aguardando Arquivamento"}).eq("id", c['id']).execute()
+                st.success("Pagamento realizado com sucesso!")
+                st.rerun()
 
 
 elif perfil_usuario == "Proprietário / Diretoria (Gean)":
@@ -1046,15 +1040,21 @@ elif perfil_usuario == "Proprietário / Diretoria (Gean)":
             except: todos_lancamentos = []
             for lanc in todos_lancamentos:
                 v_at = float(lanc.get('valor', 0) or 0)
-                with st.expander(f"ID: {lanc['id']} | {lanc.get('categoria','')} | R$ {v_at:.2f}"):
-                    if st.button("🗑️ Apagar", key=f"d_fin_{lanc['id']}"):
+                # Rastreabilidade clara com Nome do Beneficiário, Categoria, Valor, Status e Quem gerou
+                status_atual = lanc.get('status_lancamento', 'N/A')
+                beneficiario_nome = lanc.get('beneficiario', 'Não informado')
+                criado_por = lanc.get('criado_por', 'N/A')
+                
+                with st.expander(f"[{status_atual}] Beneficiário: {beneficiario_nome} | R$ {v_at:.2f} (Criado por: {criado_por})"):
+                    st.write(f"**Categoria:** {lanc.get('categoria')} | **Descrição:** {lanc.get('descricao')}")
+                    if st.button("🗑️ Apagar Ordem", key=f"d_fin_{lanc['id']}"):
                         supabase.table("lancamentos_financeiros").delete().eq("id", lanc['id']).execute(); st.rerun()
         with et2:
             try: todos_colabs = supabase.table("colaboradores").select("*").order("id", desc=True).execute().data
             except: todos_colabs = []
             for colab in todos_colabs:
                 with st.expander(f"{colab.get('nome_completo','')} | CPF: {colab.get('cpf','')}"):
-                    if st.button("🗑️ Apagar", key=f"d_col_{colab['id']}"):
+                    if st.button("🗑️ Apagar Colaborador", key=f"d_col_{colab['id']}"):
                         supabase.table("colaboradores").delete().eq("id", colab['id']).execute(); st.rerun()
         with et3:
             try: prod_flor = supabase.table("producao_diaria").select("*").order("id", desc=True).limit(20).execute().data
