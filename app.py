@@ -446,33 +446,36 @@ def gerenciar_autenticacao():
             st.rerun()
         return True
 
+    # LISTA ATUALIZADA: Diretoria no topo!
+    perfis = [
+        "Selecione o seu setor...",
+        "Proprietário / Diretoria (Gean)",
+        "RH Cadastral - Unificado",
+        "Engenharia Florestal (Jean Gustavo)",
+        "Operacional Indústria - Serraria (Felipe)",
+        "Operacional Indústria - Carvoaria (Nelson)",
+        "Lançamentos Financeiros (Jonas)",
+        "Execução de Pagamentos (Matheus)"
+    ]
+    
     with st.sidebar.form("form_login"):
-        perfis = [
-            "Selecione o seu setor...",
-            "RH Cadastral - Unificado",
-            "Engenharia Florestal (Jean Gustavo)",
-            "Operacional Indústria - Serraria (Felipe)",
-            "Operacional Indústria - Carvoaria (Nelson)",
-            "Lançamentos Financeiros (Jonas)",
-            "Execução de Pagamentos (Matheus)",
-            "Proprietário / Diretoria (Gean)"
-        ]
-        
         perfil_selecionado = st.selectbox("Quem está a aceder?", perfis)
-        st.caption("Apenas a Diretoria necessita de palavra-passe.")
-        senha_login = st.text_input("Palavra-passe", type="password")
         
+        senha_login = ""
+        # O campo de senha AGORA SÓ APARECE se a Diretoria for selecionada
+        if perfil_selecionado == "Proprietário / Diretoria (Gean)":
+            st.caption("Por favor, insira a palavra-passe executiva:")
+            senha_login = st.text_input("Palavra-passe", type="password")
+            
         submit_login = st.form_submit_button("Entrar")
         
         if submit_login:
             if perfil_selecionado == "Selecione o seu setor...":
                 st.error("Por favor, selecione um setor na lista.")
             elif perfil_selecionado == "Proprietário / Diretoria (Gean)" and senha_login != "admin":
-                # A senha padrão da diretoria é "admin" (Pode alterar aqui se quiser)
                 st.error("Palavra-passe incorreta para a Diretoria.")
             else:
                 st.session_state.perfil_usuario = perfil_selecionado
-                # Criamos um email fictício para a base de dados aceitar o registo do utilizador
                 if perfil_selecionado == "Proprietário / Diretoria (Gean)":
                     st.session_state.email_usuario = "gean@florestalamazonia.com"
                 else:
@@ -480,7 +483,7 @@ def gerenciar_autenticacao():
                 
                 st.session_state.usuario_autenticado = True
                 st.rerun()
-                
+            
     with st.sidebar.expander("📱 Como instalar o App"):
         st.markdown("""
         **No Celular (Android):**  
