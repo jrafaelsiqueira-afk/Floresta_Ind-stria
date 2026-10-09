@@ -21,7 +21,6 @@ st.set_page_config(page_title="Florestal Operacional", layout="wide", page_icon=
 SUPABASE_URL = "https://ekqemmqbgesyvngbiqyk.supabase.co"
 SUPABASE_KEY = "sb_publishable_pLuBSE1xQymIoRqONHDJMA_HUZMw23I"
 
-@st.cache_resource
 def init_supabase():
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -428,7 +427,7 @@ def renderizar_reprovados(email):
                     supabase.table("lancamentos_financeiros").update({"status_lancamento": "Cancelado"}).eq("id", r['id']).execute(); st.rerun()
 
 # ---------------------------------------------------------
-# SISTEMA DE LOGIN E ROTEAMENTO
+# SISTEMA DE LOGIN SIMPLIFICADO (SEM BLOQUEIOS SUPABASE)
 # ---------------------------------------------------------
 def gerenciar_autenticacao():
     st.sidebar.title("🔐 Acesso ao Sistema")
@@ -439,34 +438,49 @@ def gerenciar_autenticacao():
         st.session_state.email_usuario = None
         
     if st.session_state.usuario_autenticado:
-        st.sidebar.success(f"Logado: {st.session_state.email_usuario}")
+        st.sidebar.success(f"Logado como:\n**{st.session_state.perfil_usuario}**")
         if st.sidebar.button("🚪 Sair"):
             st.session_state.usuario_autenticado = False
             st.session_state.perfil_usuario = None
+            st.session_state.email_usuario = None
             st.rerun()
         return True
 
-    # Melhoria 1: Uso de st.form e autocomplete para o navegador salvar a senha
     with st.sidebar.form("form_login"):
-        email_login = st.text_input("E-mail", autocomplete="username").strip()
-        senha_login = st.text_input("Senha", type="password", autocomplete="current-password").strip()
+        perfis = [
+            "Selecione o seu setor...",
+            "RH Cadastral - Unificado",
+            "Engenharia Florestal (Jean Gustavo)",
+            "Operacional Indústria - Serraria (Felipe)",
+            "Operacional Indústria - Carvoaria (Nelson)",
+            "Lançamentos Financeiros (Jonas)",
+            "Execução de Pagamentos (Matheus)",
+            "Proprietário / Diretoria (Gean)"
+        ]
+        
+        perfil_selecionado = st.selectbox("Quem está a aceder?", perfis)
+        st.caption("Apenas a Diretoria necessita de palavra-passe.")
+        senha_login = st.text_input("Palavra-passe", type="password")
+        
         submit_login = st.form_submit_button("Entrar")
         
         if submit_login:
-            try:
-                supabase.auth.sign_in_with_password({"email": email_login, "password": senha_login})
-                perfil_db = supabase.table("usuarios_perfis").select("perfil").eq("email", email_login).execute()
-                if perfil_db.data:
-                    st.session_state.perfil_usuario = perfil_db.data[0]["perfil"]
-                    st.session_state.email_usuario = email_login
-                    st.session_state.usuario_autenticado = True
-                    st.rerun()
-                else: 
-                    st.error("Perfil não encontrado.")
-            except: 
-                st.error("E-mail ou senha incorretos.")
+            if perfil_selecionado == "Selecione o seu setor...":
+                st.error("Por favor, selecione um setor na lista.")
+            elif perfil_selecionado == "Proprietário / Diretoria (Gean)" and senha_login != "admin":
+                # A senha padrão da diretoria é "admin" (Pode alterar aqui se quiser)
+                st.error("Palavra-passe incorreta para a Diretoria.")
+            else:
+                st.session_state.perfil_usuario = perfil_selecionado
+                # Criamos um email fictício para a base de dados aceitar o registo do utilizador
+                if perfil_selecionado == "Proprietário / Diretoria (Gean)":
+                    st.session_state.email_usuario = "gean@florestalamazonia.com"
+                else:
+                    st.session_state.email_usuario = "operacao_livre@florestalamazonia.com"
                 
-    # Melhoria 2: Dica visível para os colaboradores instalarem o App na tela inicial
+                st.session_state.usuario_autenticado = True
+                st.rerun()
+                
     with st.sidebar.expander("📱 Como instalar o App"):
         st.markdown("""
         **No Celular (Android):**  
@@ -474,26 +488,21 @@ def gerenciar_autenticacao():
         
         **No iPhone (iOS):**  
         Abra no Safari, clique no ícone de **Compartilhar** (quadrado com seta para cima) e escolha **Adicionar à Tela de Início**.
-        
-        **No Notebook:**  
-        No Chrome, clique nos **3 pontinhos** > Salvar e compartilhar > **Criar Atalho...** (Marque a opção "Abrir como janela").
         """)
         
     return False
 
 if not gerenciar_autenticacao(): st.stop()
 
-email_logado = st.session_state.email_usuario
 perfil_banco = st.session_state.perfil_usuario
-# Atualizado com os 3 emails de diretoria
-EMAILS_ADMIN = ["jrafaelsiqueira@gmail.com", "gean@florestalamazonia.com", "vivianemiyamura@gmail.com"] 
+email_logado = st.session_state.email_usuario
 
-if email_logado in EMAILS_ADMIN:
+if perfil_banco == "Proprietário / Diretoria (Gean)":
     st.sidebar.warning("👑 **MODO ADMINISTRADOR**")
     perfil_usuario = st.sidebar.selectbox("Navegar como:", ["Proprietário / Diretoria (Gean)", "RH Cadastral - Unificado", "Engenharia Florestal (Jean Gustavo)", "Operacional Indústria - Serraria (Felipe)", "Operacional Indústria - Carvoaria (Nelson)", "Lançamentos Financeiros (Jonas)", "Execução de Pagamentos (Matheus)"])
 else:
     perfil_usuario = perfil_banco
-    st.sidebar.info(f"Painel: **{perfil_usuario}**")
+    st.sidebar.info(f"Painel Operacional")
 
 # ---------------------------------------------------------
 # MÓDULOS ESPECÍFICOS DE CADA SETOR
@@ -751,13 +760,11 @@ if perfil_usuario == "RH Cadastral - Unificado":
             
             if st.button("Processar Planilha e Gerar Pagamentos") and arq_folha:
                 try:
-                    # Leitura defensiva para evitar o Connection Error
                     if arq_folha.name.endswith('.csv'):
                         df_folha = pd.read_csv(arq_folha)
                     else:
                         df_folha = pd.read_excel(arq_folha)
                     
-                    # 1. Limpar espaços nos nomes das colunas e mapear
                     df_folha.columns = df_folha.columns.str.strip()
                     cols = {str(col).lower(): col for col in df_folha.columns}
                     
@@ -767,7 +774,6 @@ if perfil_usuario == "RH Cadastral - Unificado":
 
                     ordens_geradas = 0
                     for index, row in df_folha.iterrows():
-                        # 2. Tratamento blindado de valores nulos e strings com vírgula (Ex: "1.500,00")
                         if pd.isna(row.get(col_nome)): continue
                         
                         val_str = str(row.get(col_valor, 0)).replace('R$', '').replace('.', '').replace(',', '.').strip()
